@@ -9,7 +9,7 @@ let records = [];
 
 // 家庭成員對照（之後填入真實 userId）
 const FAMILY = {
-  // 'U1234567890abcdef': '葉大屁',
+  // 'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
   // 'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',
   // 群組會自動用 displayName
 };
