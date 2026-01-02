@@ -61,6 +61,13 @@ app.post('/webhook', async (req, res) => {
       return res.status(200).send('OK');
     }
 
+    if (text === '所有記錄') {
+      const allTotal = records.reduce((sum, r) => sum + r.amount, 0);
+      const list = records.map(r => `${r.who}:${r.amount}`).join(', ');
+      await reply(replyToken, `總計 ${allTotal} 元\n${list}`);
+      return res.status(200).send('OK');
+    }
+
     // 記帳：類別 [店家] 金額
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
