@@ -4,21 +4,23 @@ app.use(express.json());
 
 const LINE_TOKEN = 'rs1z63zui+VBM34QAuCJMZ5uNv3BcwaGcgc4f0KzApm/F6q1GZd+UtSNnNbSR3QMZhZl0j/+evGxqXrVLf22xahmRhaauuZaaSwr1UTwNluQwFIstmM/dM4W9E/td5+E9APtWkRPc2KlQ9gy0+rTKQdB04t89/1O/w1cDnyilFU=';  // 改這裡
 
-// 記憶體記錄（重啟清空，重啟後用 Google Sheet）
+// 記憶體記錄（重啟清空）
 let records = [];
 
-// 家庭成員對照（之後填入真實 userId）
-const FAMILY = {
-  // 'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
-  // 'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',
-  // 群組會自動用 displayName
-};
+// 成員對照表（傳「我的ID」後填入）
+function getMemberName(userId) {
+  const FAMILY = {
+    // 範例，之後填入真實 ID：
+    'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
+    'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',
+  };
+  return FAMILY[userId] || userId.slice(-8);  // 預設 ID 後8碼
+}
 
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
     
-    // 只處理文字訊息
     if (event.type !== 'message' || event.message.type !== 'text') {
       return res.status(200).send('OK');
     }
@@ -26,35 +28,36 @@ app.post('/webhook', async (req, res) => {
     const text = event.message.text.trim();
     const replyToken = event.replyToken;
     const userId = event.source.userId;
-    const userName = event.source.userProfile?.displayName || '家人';
+    const memberName = getMemberName(userId);
 
-  // 顯示 userId 指令
-  if (text === '我的ID') {
-    await reply(replyToken, `👤 ${userName}\nID：\`${userId}\``);
-    return res.status(200).send('OK');
-  }
-    
-    // 查詢指令
+    // 我的ID
+    if (text === '我的ID') {
+      await reply(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
+      return res.status(200).send('OK');
+    }
+
+    // 記帳清單
     if (text === '記帳清單') {
       if (records.length === 0) {
-        await reply(replyToken, `${userName}，目前無記帳記錄！\n傳『餐飲 180』開始記帳`);
+        await reply(replyToken, `${memberName}，目前無記帳記錄！`);
       } else {
         const total = records.reduce((sum, r) => sum + r.amount, 0);
         const recent = records.slice(-10).map(r => 
-          `${r.date.slice(5,10)} ${r.who} ${r.category} ${r.amount}`
+          `${r.date.slice(5,10)} ${r.who} ${r.category} ${r.amount}元`
         ).join('\n');
-        await reply(replyToken, `📊 ${userName} 的記帳（共 ${total} 元）\n${recent}`);
+        await reply(replyToken, `📊 ${memberName} 查看（共 ${total} 元）\n${recent}`);
       }
       return res.status(200).send('OK');
     }
 
-    // 本月總計（簡化版）
+    // 本月總計
     if (text === '本月總計') {
-      const thisMonth = records.filter(r => 
-        new Date(r.date).getMonth() === new Date().getMonth()
-      );
-      const monthTotal = thisMonth.reduce((sum, r) => sum + r.amount, 0);
-      await reply(replyToken, `📅 本月總花費：${monthTotal} 元\n共 ${thisMonth.length} 筆`);
+      const now = new Date();
+      const monthTotal = records.filter(r => {
+        const date = new Date(r.date);
+        return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+      }).reduce((sum, r) => sum + r.amount, 0);
+      await reply(replyToken, `📅 ${memberName} 本月總花費：${monthTotal} 元\n共 ${records.length} 筆`);
       return res.status(200).send('OK');
     }
 
@@ -67,7 +70,7 @@ app.post('/webhook', async (req, res) => {
       if (!isNaN(amount) && amount > 0) {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
         const record = {
-          who: userName,
+          who: memberName,
           userId,
           category,
           shop,
@@ -76,19 +79,23 @@ app.post('/webhook', async (req, res) => {
         };
         
         records.push(record);
-        // 只保留最近 100 筆
         if (records.length > 100) records = records.slice(-100);
         
-        const msg = `✅ ${userName} 記帳成功！\n${category} ${shop || ''}${amount}元`;
+        const msg = `✅ ${memberName} 記：${category} ${shop || ''}${amount}元`;
         await reply(replyToken, msg);
         console.log('記帳：', record);
-      } else {
-        await reply(replyToken, `${userName}\n格式：類別 [店家] 金額\n例：餐飲 麥當勞 180 或 餐飲 180`);
+        return res.status(200).send('OK');
       }
-    } else {
-      await reply(replyToken, `${userName}\n📝 家庭記帳 Bot\n\n記帳：『餐飲 180』\n查詢：『記帳清單』『本月總計』`);
     }
 
+    // 幫助
+    await reply(replyToken, 
+      `👨‍👩‍👧‍👦 ${memberName} 你好！\n\n` +
+      `📝 記帳：『餐飲 180』或『超市 麥當勞 520』\n` +
+      `📊 查詢：『記帳清單』『本月總計』\n` +
+      `🆔 ID：『我的ID』`
+    );
+    
     res.status(200).send('OK');
   } catch (error) {
     console.error('錯誤：', error);
@@ -98,7 +105,7 @@ app.post('/webhook', async (req, res) => {
 
 async function reply(replyToken, text) {
   try {
-    await fetch('https://api.line.me/v2/bot/message/reply', {
+    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,19 +113,26 @@ async function reply(replyToken, text) {
       },
       body: JSON.stringify({
         replyToken,
-        messages: [{ type: 'text', text }]
+        messages: [{ type: 'text', text: text }]
       })
     });
+    if (!response.ok) {
+      console.error('LINE回覆失敗：', response.status);
+    }
   } catch (e) {
     console.error('回覆錯誤：', e);
   }
 }
 
 app.get('/', (req, res) => {
-  res.send(`家庭記帳 Bot 運行中\n記錄數：${records.length}`);
+  res.send(`家庭記帳 Bot v2\n記錄：${records.length}筆`);
+});
+
+app.get('/records', (req, res) => {
+  res.json(records);
 });
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`家庭記帳 Bot 運行於 ${port}`);
+  console.log(`家庭記帳 Bot 運行於 port ${port}`);
 });
