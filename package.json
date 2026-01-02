@@ -1,7 +1,6 @@
 {
   "name": "line-account-bot",
   "version": "1.0.0",
-  "description": "家庭記帳 LINE Bot",
   "main": "app.js",
   "scripts": {
     "start": "node app.js"
