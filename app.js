@@ -27,6 +27,12 @@ app.post('/webhook', async (req, res) => {
     const replyToken = event.replyToken;
     const userId = event.source.userId;
     const userName = event.source.userProfile?.displayName || '家人';
+
+  // 顯示 userId 指令
+  if (text === '我的ID') {
+    await reply(replyToken, `👤 ${userName}\nID：\`${userId}\``);
+    return res.status(200).send('OK');
+  }
     
     // 查詢指令
     if (text === '記帳清單') {
