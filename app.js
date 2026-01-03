@@ -9,6 +9,17 @@ const db = new sqlite3.Database('records.db');  // 單檔 DB
 let memoryRecords = [];
 
 // 初始化資料庫
+db.run(`CREATE TABLE IF NOT EXISTS records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT,        -- 顯示用
+  iso_date TEXT,    -- 標準日期查詢用
+  who TEXT,
+  userId TEXT,
+  category TEXT,
+  shop TEXT,
+  amount REAL
+)`);
+
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +36,7 @@ db.serialize(() => {
 
 async function loadAllRecords() {
   return new Promise((resolve) => {
-    db.all(`SELECT * FROM records ORDER BY date DESC LIMIT 1000`, (err, rows) => {
+    db.all(`SELECT date, iso_date, who, userId, category, shop, amount FROM records ORDER BY iso_date DESC LIMIT 1000`, (err, rows) => {
       if (!err) {
         memoryRecords = rows.map(r => ({
           who: r.who, userId: r.userId, category: r.category,
@@ -41,9 +52,12 @@ async function loadAllRecords() {
 // 寫入記錄
 async function addRecord(memberName, userId, category, shop, amount) {
   return new Promise((resolve, reject) => {
-    const date = new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
-    db.run(`INSERT INTO records (date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?)`,
-      [date, memberName, userId, category, shop || '', amount],
+    const now = new Date();
+    const displayDate = now.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});  // 顯示用
+    const isoDate = now.toISOString();  // 標準 ISO 格式，易解析
+    
+    db.run(`INSERT INTO records (date, iso_date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [displayDate, isoDate, memberName, userId, category, shop || '', amount],
       function(err) {
         if (err) {
           console.error('DB寫入錯誤：', err);
@@ -146,14 +160,15 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (text === '本週支出') {
-      const now = new Date();
-      const lastSaturday = new Date(now);
-      lastSaturday.setDate(now.getDate() - (now.getDay() || 7));
-      
-      const userRecords = memoryRecords.filter(r => {
-        const rDate = new Date(r.date);
-        return rDate >= lastSaturday && r.userId === userId;
-      });
+  const now = new Date();
+  const lastSaturday = new Date(now);
+  lastSaturday.setDate(now.getDate() - now.getDay());  // 修正：從週日算起，或調整邏輯
+  lastSaturday.setHours(0, 0, 0, 0);
+  
+  const userRecords = memoryRecords.filter(r => {
+    const rDate = new Date(r.iso_date || r.date);  // 優先 ISO
+    return rDate >= lastSaturday && r.userId === userId;
+  });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
       return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
