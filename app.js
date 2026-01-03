@@ -53,19 +53,25 @@ async function loadAllRecords() {
 async function addRecord(memberName, userId, category, shop, amount) {
   return new Promise((resolve, reject) => {
     const now = new Date();
-    const displayDate = now.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});  // 顯示用
-    const isoDate = now.toISOString();  // 標準 ISO 格式，易解析
+    const stmtDate = now.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
     
-    db.run(`INSERT INTO records (date, iso_date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [displayDate, isoDate, memberName, userId, category, shop || '', amount],
+    db.run(`INSERT INTO records (date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?)`,
+      [stmtDate, memberName, userId, category, shop || '', amount],
       function(err) {
         if (err) {
           console.error('DB寫入錯誤：', err);
           reject(err);
         } else {
-          // 更新記憶體
-          const record = { who: memberName, userId, category, shop: shop || '', amount, date };
-          memoryRecords.unshift(record);  // 新增到最前
+          // 修正：明確定義 record.date
+          const record = { 
+            who: memberName, 
+            userId, 
+            category, 
+            shop: shop || '', 
+            amount, 
+            date: stmtDate  // ← 明確指定
+          };
+          memoryRecords.unshift(record);
           if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
           console.log(`✅ 新增：${memberName} ${category} ${amount}元`);
           resolve();
