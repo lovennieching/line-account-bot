@@ -153,20 +153,31 @@ app.post('/webhook', async (req, res) => {
       return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
     }
 
-    if (text === '本週支出') {
-      const now = new Date();
-      const dayOfWeek = now.getDay();
-      const lastSaturday = new Date(now);
-      lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);
-      lastSaturday.setHours(0, 0, 0, 0);
-      
-      const userRecords = records.filter(r => {
-        const [dateStr] = r.date.split(' ');
-        const match = dateStr.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-        if (!match) return false;
-        const rDate = new Date(`${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`);
-        return rDate >= lastSaturday && r.userId === userId;
-      });
+if (text === '本週支出') {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun, 6=Sat
+  const lastSaturday = new Date(now);
+  lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);
+  lastSaturday.setHours(0, 0, 0, 0);
+  
+  const userRecords = records.filter(r => {
+    const [dateStr] = r.date.split(' ');
+    const match = dateStr.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+    if (!match) return false;
+    const rDate = new Date(
+      `${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`
+    );
+    // 關鍵：只抓這個 userId 的資料
+    return rDate >= lastSaturday && r.userId === userId;
+  });
+  
+  const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
+  return replyAndEnd(
+    replyToken, 
+    `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`
+  );
+}
+
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
       return replyAndEnd(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
