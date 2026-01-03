@@ -15,7 +15,7 @@ function getMemberName(userId) {
   return FAMILY[userId] || userId.slice(-8);
 }
 
-// 星期五21:00提醒（保持原功能）
+// 星期五21:00提醒
 cron.schedule('0 21 * * 5', async () => {
   try {
     await fetch('https://api.line.me/v2/bot/message/broadcast', {
@@ -36,70 +36,32 @@ cron.schedule('0 21 * * 5', async () => {
   }
 }, { timezone: 'Asia/Taipei' });
 
-// Flex Message 按鈕選單
-const MENU_FLEX = {
-  type: "flex",
-  altText: "家庭記帳選單",
-  contents: {
-    type: "bubble",
-    body: {
-      type: "box",
-      layout: "vertical",
-      contents: [
-        {
-          type: "text",
-          text: "💰 家庭記帳助手",
-          weight: "bold",
-          size: "xl"
-        },
-        {
-          type: "separator",
-          margin: "md"
-        },
-        {
-          type: "button",
-          action: {
-            type: "message",
-            label: "📝 即時記帳",
-            text: "📝 記帳說明"
-          },
-          style: "primary",
-          margin: "md"
-        },
-        {
-          type: "button",
-          action: {
-            type: "message",
-            label: "📊 記帳清單",
-            text: "記帳清單"
-          },
-          style: "primary",
-          margin: "md"
-        },
-        {
-          type: "button",
-          action: {
-            type: "message",
-            label: "📈 本週支出",
-            text: "本週支出"
-          },
-          style: "primary",
-          margin: "md"
-        },
-        {
-          type: "button",
-          action: {
-            type: "message",
-            label: "🆔 我的ID",
-            text: "我的ID"
-          },
-          style: "secondary",
-          margin: "md"
+// 簡化版文字按鈕（Quick Reply，100%相容）
+async function showMenu(replyToken) {
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json', 
+      'Authorization': `Bearer ${LINE_TOKEN}` 
+    },
+    body: JSON.stringify({ 
+      replyToken, 
+      messages: [{
+        type: 'text',
+        text: '👇 點擊下方按鈕快速操作：',
+        quickReply: {
+          items: [
+            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
+            { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '清空紀錄' } }
+          ]
         }
-      ]
-    }
-  }
-};
+      }]
+    })
+  });
+}
 
 app.post('/webhook', async (req, res) => {
   try {
@@ -113,32 +75,27 @@ app.post('/webhook', async (req, res) => {
     const userId = event.source.userId;
     const memberName = getMemberName(userId);
 
-    // 新增：傳「菜單」「選單」「menu」顯示按鈕
-    if (['菜單', '選單', 'menu', ''].includes(text)) {
-      return replyFlex(replyToken, MENU_FLEX);
+    // 顯示選單
+    if (['菜單', '選單', 'menu'].includes(text)) {
+      return showMenu(replyToken);
     }
 
-    // 📝 記帳說明（點按鈕後教用法）
+    // 記帳說明
     if (text === '📝 記帳說明') {
-      return replyAndEnd(replyToken, 
-        `${memberName} 記帳教學：\n` +
-        `📝 餐飲 180\n` +
-        `📝 超市 全家 250\n` +
-        `📝 交通 公車 40\n\n` +
-        `💡 記帳完自動回選單！`
+      return replyText(replyToken, 
+        `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250\n📝 交通 公車 40\n\n記帳後自動回選單！`
       );
     }
 
-    // 原有功能保持不變
     if (text === '我的ID') {
-      return replyAndEnd(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
+      return replyText(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
     }
 
     if (text === '記帳清單') {
-      if (!records.length) return replyAndEnd(replyToken, `${memberName}，目前無記帳記錄！`);
+      if (!records.length) return replyText(replyToken, `${memberName}，目前無記帳記錄！`);
       const total = records.reduce((sum, r) => sum + r.amount, 0);
       const recent = records.slice(-10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
-      return replyAndEnd(replyToken, `📊 ${memberName}（共 ${total} 元）\n${recent}`);
+      return replyText(replyToken, `📊 ${memberName}（共 ${total} 元）\n${recent}`);
     }
 
     if (text === '本月總計') {
@@ -150,45 +107,35 @@ app.post('/webhook', async (req, res) => {
         return match && parseInt(match[2]) - 1 === nowMonth && parseInt(match[1]) === nowYear;
       });
       const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
+      return replyText(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
     }
 
-if (text === '本週支出') {
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0=Sun, 6=Sat
-  const lastSaturday = new Date(now);
-  lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);
-  lastSaturday.setHours(0, 0, 0, 0);
-  
-  const userRecords = records.filter(r => {
-    const [dateStr] = r.date.split(' ');
-    const match = dateStr.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-    if (!match) return false;
-    const rDate = new Date(
-      `${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`
-    );
-    // 關鍵：只抓這個 userId 的資料
-    return rDate >= lastSaturday && r.userId === userId;
-  });
-  
-  const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-  return replyAndEnd(
-    replyToken, 
-    `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`
-  );
-}
-
+    // ✅ 本週支出：只顯示個人（已修復）
+    if (text === '本週支出') {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const lastSaturday = new Date(now);
+      lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);
+      lastSaturday.setHours(0, 0, 0, 0);
+      
+      const userRecords = records.filter(r => {
+        const [dateStr] = r.date.split(' ');
+        const match = dateStr.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+        if (!match) return false;
+        const rDate = new Date(`${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`);
+        return rDate >= lastSaturday && r.userId === userId; // 只查個人！
+      });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyAndEnd(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
+      return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
     }
 
     if (text === '清空紀錄') {
       records = [];
-      return replyAndEnd(replyToken, `🗑️ ${memberName} 已清空所有記錄`);
+      return replyText(replyToken, `🗑️ ${memberName} 已清空所有記錄`);
     }
 
-    // 記帳邏輯（所有功能保持原樣）
+    // 記帳邏輯
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
       const category = parts[0];
@@ -196,47 +143,30 @@ if (text === '本週支出') {
       if (!isNaN(amount) && amount > 0) {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
         const record = {
-          who: memberName, userId, category, shop, amount,
+          who: memberName,
+          userId, // 關鍵：儲存 userId 用來過濾個人資料
+          category, 
+          shop, 
+          amount,
           date: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})
         };
         records.push(record);
         if (records.length > 100) records = records.slice(-100);
-        return replyAndEnd(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount}元`);
+        return replyText(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount}元`);
       }
     }
 
-    // 預設回傳美觀選單
-    return replyFlex(replyToken, MENU_FLEX);
+    // 預設顯示選單
+    return showMenu(replyToken);
 
   } catch (error) {
-    console.error(error);
+    console.error('Webhook 錯誤：', error);
     res.status(200).send('ERROR');
   }
 });
 
-// 新增 Flex Message 回覆函數
-async function replyFlex(replyToken, flexMessage) {
-  try {
-    await fetch('https://api.line.me/v2/bot/message/reply', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${LINE_TOKEN}` 
-      },
-      body: JSON.stringify({ 
-        replyToken, 
-        messages: [flexMessage] 
-      })
-    });
-  } catch (e) { 
-    console.error('Flex回覆錯誤：', e); 
-  }
-}
-
-async function replyAndEnd(replyToken, text) { 
-  await reply(replyToken, text); 
-}
-async function reply(replyToken, text) {
+// 簡化回覆函數
+async function replyText(replyToken, text) {
   try {
     await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
