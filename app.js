@@ -1,6 +1,7 @@
 const express = require('express');
 const cron = require('node-cron');
 const app = express();
+console.log('Dependencies loaded');
 app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;  // Render Environment Variables
