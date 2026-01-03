@@ -105,14 +105,15 @@ async function showMenu(replyToken) {
       messages: [{
         type: 'text',
         text: '👇 點擊下方按鈕快速操作：',
-        quickReply: {
-          items: [
-            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
-            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
-            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
-            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } }
-          ]
-        }
+       quickReply: {
+  items: [
+    { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+    { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
+    { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
+    { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
+    { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }  // 🔥 新增這行
+  ]
+}
       }]
     })
   }).catch(e => console.error('選單錯誤：', e));
