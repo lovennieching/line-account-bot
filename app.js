@@ -176,6 +176,14 @@ app.post('/webhook', async (req, res) => {
       return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
     }
 
+if (text === '🗑️ 清空紀錄') {
+  memoryRecords = [];
+  db.exec('DELETE FROM records', () => {
+    replyText(replyToken, `${memberName} 已清空所有記錄！`);
+  });
+  return;
+}
+    
     // 記帳語法：類別 [店家] 金額
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
