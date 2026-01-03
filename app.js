@@ -14,6 +14,11 @@ const PRIVATE_KEY = `92900dbc5f13733378c49e5a12b3d2280803fda8`;  // 從 service 
 let doc;  // Google Spreadsheet 實例
 
 async function initSheets() {
+   if (!SHEET_ID || !SERVICE_ACCOUNT_EMAIL || !PRIVATE_KEY) {
+    console.log('缺少 Google Sheets 環境變數');
+    return;
+  }
+  
   doc = new GoogleSpreadsheet(SHEET_ID);
   
   // 使用服務帳戶認證 [web:1][web:2]
