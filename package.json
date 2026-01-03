@@ -7,8 +7,9 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "google-spreadsheet": "^4.1.2"
-  },
+    "google-spreadsheet": "^4.1.2",
+    "google-auth-library": "^9.14.0"
+  }
   "engines": {
     "node": ">=18.0.0"
   }
