@@ -6,8 +6,8 @@ app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const SHEET_ID = process.env.SHEET_ID;
-const SERVICE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+const SERVICE_EMAIL = process.env.SERVICE_ACCOUNT_EMAIL;
+const PRIVATE_KEY = process.env.PRIVATE_KEY(/\\n/g, '\n');
 
 let doc;
 let memoryRecords = []; // 記憶體快取，提升查詢速度
