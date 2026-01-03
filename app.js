@@ -80,19 +80,22 @@ app.post('/webhook', async (req, res) => {
       return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
     }
 
-    if (text === '本週支出') {
-      const now = new Date();
-      const dayOfWeek = now.getDay();  // 0=Sun, 6=Sat
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));  // 上週六
-      const userRecords = records.filter(r => {
-        const rDate = new Date(r.date);
-        return rDate >= startOfWeek && r.userId === userId;
-      });
-      const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyAndEnd(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
-    }
-
+   if (text === '本週支出') {
+  const now = new Date('Asia/Taipei');
+  const dayOfWeek = now.getDay();  // 0=Sun, 6=Sat
+  const daysToLastSaturday = dayOfWeek === 0 ? 7 : dayOfWeek + 1;  // 到上週六
+  const lastSaturday = new Date(now);
+  lastSaturday.setDate(now.getDate() - daysToLastSaturday);
+  lastSaturday.setHours(0, 0, 0, 0);
+  
+  const userRecords = records.filter(r => {
+    const rDate = new Date(r.date + ' GMT+0800');
+    return rDate >= lastSaturday && r.userId === userId;
+  });
+  
+  const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
+  return replyAndEnd(replyToken, `📈 ${memberName}\n本週（${lastSaturday.toLocaleDateString('zh-TW')}至今）：${weekTotal} 元\n${userRecords.length} 筆`);
+}
     if (text === '清空紀錄') {
       records = [];
       return replyAndEnd(replyToken, `🗑️ ${memberName} 已清空所有記錄`);
