@@ -5,42 +5,32 @@ const app = express();
 app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_TOKEN;
-const db = new sqlite3.Database('records.db');  // 單檔 DB
+const db = new sqlite3.Database('records.db');
 let memoryRecords = [];
 
 // 初始化資料庫
-db.run(`CREATE TABLE IF NOT EXISTS records (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  date TEXT,        -- 顯示用
-  iso_date TEXT,    -- 標準日期查詢用
-  who TEXT,
-  userId TEXT,
-  category TEXT,
-  shop TEXT,
-  amount REAL
-)`);
-
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT,
+    iso_date TEXT,
     who TEXT,
     userId TEXT,
     category TEXT,
     shop TEXT,
     amount REAL
   )`);
-  console.log('✅ SQLite 資料庫初始化');
-  loadAllRecords();  // 載入快取
+  console.log('✅ SQLite 初始化完成');
+  loadAllRecords();
 });
 
 async function loadAllRecords() {
   return new Promise((resolve) => {
-    db.all(`SELECT date, iso_date, who, userId, category, shop, amount FROM records ORDER BY iso_date DESC LIMIT 1000`, (err, rows) => {
+    db.all(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`, (err, rows) => {
       if (!err) {
         memoryRecords = rows.map(r => ({
-          who: r.who, userId: r.userId, category: r.category,
-          shop: r.shop, amount: r.amount, date: r.date
+          ...r,
+          date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})
         }));
         console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
       }
@@ -49,27 +39,28 @@ async function loadAllRecords() {
   });
 }
 
-// 寫入記錄
 async function addRecord(memberName, userId, category, shop, amount) {
   return new Promise((resolve, reject) => {
     const now = new Date();
     const stmtDate = now.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
+    const isoDate = now.toISOString();
     
-    db.run(`INSERT INTO records (date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?)`,
-      [stmtDate, memberName, userId, category, shop || '', amount],
+    db.run(`INSERT INTO records (date, iso_date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [stmtDate, isoDate, memberName, userId, category, shop || '', amount],
       function(err) {
         if (err) {
           console.error('DB寫入錯誤：', err);
           reject(err);
         } else {
-          // 修正：明確定義 record.date
           const record = { 
+            id: this.lastID, 
+            date: stmtDate, 
+            iso_date: isoDate, 
             who: memberName, 
             userId, 
             category, 
             shop: shop || '', 
-            amount, 
-            date: stmtDate  // ← 明確指定
+            amount 
           };
           memoryRecords.unshift(record);
           if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
@@ -90,7 +81,7 @@ function getMemberName(userId) {
 }
 
 async function replyText(replyToken, text) {
-  const fetch = (await import('node-fetch')).default;  // Node 18+ 動態 import
+  const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: { 
@@ -124,10 +115,10 @@ async function showMenu(replyToken) {
         }
       }]
     })
-  });
+  }).catch(e => console.error('選單錯誤：', e));
 }
 
-// 星期五晚上 9 點提醒
+// 星期五晚上9點全群提醒
 cron.schedule('0 21 * * 5', async () => {
   const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/broadcast', {
@@ -139,6 +130,7 @@ cron.schedule('0 21 * * 5', async () => {
   }).catch(e => console.error('提醒錯誤', e));
 }, { timezone: 'Asia/Taipei' });
 
+// ✅ 修復後的完整 webhook（第193行問題已解決）
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
@@ -166,30 +158,22 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (text === '本週支出') {
-  const now = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay());  // 本週日 00:00
-  startOfWeek.setHours(0, 0, 0, 0);
-  
-  const userRecords = memoryRecords.filter(r => {
-    // 解析 zh-TW 日期：2026/1/3 上午8:45 → YYYY/M/D
-    const dateMatch = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-    if (!dateMatch) return false;
-    
-    const [, year, month, day] = dateMatch;
-    const rDate = new Date(year, month - 1, day);
-    rDate.setHours(0, 0, 0, 0);  // 只比日期
-    
-    return rDate >= startOfWeek && r.userId === userId;
-  });
-  
-  const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-  return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
-}
-
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - (now.getDay() || 7) + 1);  // 週一開始
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      const userRecords = memoryRecords.filter(r => {
+        const dateMatch = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+        if (!dateMatch) return false;
+        const [, year, month, day] = dateMatch;
+        const rDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        rDate.setHours(0, 0, 0, 0);
+        return rDate >= startOfWeek && r.userId === userId;  // 只算個人
+      });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
+      return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
     }
 
     // 記帳語法：類別 [店家] 金額
@@ -207,7 +191,7 @@ app.post('/webhook', async (req, res) => {
     return showMenu(replyToken);
   } catch (error) {
     console.error('Webhook錯誤：', error);
-    res.status(200).send('ERROR');
+    res.status(200).send('OK');
   }
 });
 
@@ -225,7 +209,7 @@ app.get('/', (req, res) => {
 
 app.get('/records.csv', (req, res) => {
   const csv = ['日期,成員,類別,店家,金額,userId'].concat(
-    memoryRecords.map(r => `${r.date},"${r.who}","${r.category}","${r.shop}",${r.amount},${r.userId}`)
+    memoryRecords.map(r => `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},${r.userId}`)
   ).join('\n');
   res.header('Content-Type', 'text/csv');
   res.attachment('records.csv');
@@ -233,4 +217,4 @@ app.get('/records.csv', (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Bot 運行於 port ${port}`));
+app.listen(port, () => console.log(`✅ Bot 運行於 port ${port}`));
