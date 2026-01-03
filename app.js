@@ -7,24 +7,24 @@ app.use(express.json());
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const SHEET_ID = process.env.SHEET_ID;
 const SERVICE_EMAIL = process.env.SERVICE_ACCOUNT_EMAIL;
-const PRIVATE_KEY = process.env.PRIVATE_KEY(/\\n/g, '\n');
+const PRIVATE_KEY = process.env.PRIVATE_KEY.replace(/\\n/g, '\n');
 
 let doc;
 let memoryRecords = []; // 記憶體快取，提升查詢速度
 
-const { JWT } = require('google-auth-library');  // 新增這行
+const { JWT } = require('google-auth-library');  // 新增
 
 async function initSheet() {
   const serviceAccountAuth = new JWT({
     client_email: SERVICE_EMAIL,
-    key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),  // 修復換行
+    private_key: PRIVATE_KEY,  // 已處理換行
     scopes: [
       'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/drive'  // 若需分享/權限，可加 drive.file
+      'https://www.googleapis.com/auth/drive.readonly'
     ],
   });
   
-  doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);  // 傳入 auth 到建構子
+  doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
   await doc.loadInfo();
   console.log('✅ Google Sheets 已連線');
   await loadAllRecords();
