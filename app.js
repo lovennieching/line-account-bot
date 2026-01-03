@@ -1,8 +1,9 @@
 const express = require('express');
+const cron = require('node-cron');
 const app = express();
 app.use(express.json());
 
-const LINE_TOKEN = 'rs1z63zui+VBM34QAuCJMZ5uNv3BcwaGcgc4f0KzApm/F6q1GZd+UtSNnNbSR3QMZhZl0j/+evGxqXrVLf22xahmRhaauuZaaSwr1UTwNluQwFIstmM/dM4W9E/td5+E9APtWkRPc2KlQ9gy0+rTKQdB04t89/1O/w1cDnyilFU=';  // 改這裡
+const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;  // Render Environment Variables
 
 let records = [];
 
@@ -10,9 +11,33 @@ function getMemberName(userId) {
   const FAMILY = {
     'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
     'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',    
-  };  // 之後填 userId
+  };
   return FAMILY[userId] || userId.slice(-8);
 }
+
+// 星期五晚上9點提醒 (Asia/Taipei)
+cron.schedule('0 21 * * 5', async () => {
+  try {
+    await fetch('https://api.line.me/v2/bot/message/broadcast', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${LINE_TOKEN}`
+      },
+      body: JSON.stringify({
+        messages: [{
+          type: 'text',
+          text: '記得今晚MARK齊數，陣間要結算啦:)'
+        }]
+      })
+    });
+    console.log('Friday reminder sent');
+  } catch (error) {
+    console.error('Reminder error:', error);
+  }
+}, {
+  timezone: 'Asia/Taipei'
+});
 
 app.post('/webhook', async (req, res) => {
   try {
@@ -54,6 +79,24 @@ app.post('/webhook', async (req, res) => {
       return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
     }
 
+    if (text === '本週支出') {
+      const now = new Date();
+      const dayOfWeek = now.getDay();  // 0=Sun, 6=Sat
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));  // 上週六
+      const userRecords = records.filter(r => {
+        const rDate = new Date(r.date);
+        return rDate >= startOfWeek && r.userId === userId;
+      });
+      const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
+      return replyAndEnd(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
+    }
+
+    if (text === '清空紀錄') {
+      records = [];
+      return replyAndEnd(replyToken, `🗑️ ${memberName} 已清空所有記錄`);
+    }
+
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
       const category = parts[0];
@@ -77,7 +120,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    return replyAndEnd(replyToken, `${memberName}\n📝 餐飲 180\n📊 記帳清單\n📅 本月總計\n🆔 我的ID`);
+    return replyAndEnd(replyToken, `${memberName}\n📝 餐飲 180\n📊 記帳清單\n📅 本月總計\n📈 本週支出\n🗑️ 清空紀錄\n🆔 我的ID`);
 
   } catch (error) {
     console.error(error);
@@ -87,12 +130,11 @@ app.post('/webhook', async (req, res) => {
 
 async function replyAndEnd(replyToken, text) {
   await reply(replyToken, text);
-  // 注意：此函式內部處理 res.send
 }
 
 async function reply(replyToken, text) {
   try {
-    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+    await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
