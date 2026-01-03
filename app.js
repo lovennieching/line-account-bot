@@ -1,73 +1,64 @@
 const express = require('express');
-const { GoogleSpreadsheet } = require('google-spreadsheet');
+const sqlite3 = require('sqlite3').verbose();
 const cron = require('node-cron');
 const app = express();
 app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_TOKEN;
-const SHEET_ID = process.env.SHEET_ID;
-const SERVICE_EMAIL = process.env.SERVICE_ACCOUNT_EMAIL;
-const PRIVATE_KEY = process.env.PRIVATE_KEY.replace(/\\n/g, '\n');
+const db = new sqlite3.Database('records.db');  // 單檔 DB
+let memoryRecords = [];
 
-let doc;
-let memoryRecords = []; // 記憶體快取，提升查詢速度
-
-const { JWT } = require('google-auth-library');  // 新增
-
-async function initSheet() {
-  const serviceAccountAuth = new JWT({
-    client_email: SERVICE_EMAIL,
-    private_key: PRIVATE_KEY,  // 已處理換行
-    scopes: [
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/drive.readonly'
-    ],
-  });
-  
-  doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
-  await doc.loadInfo();
-  console.log('✅ Google Sheets 已連線');
-  await loadAllRecords();
-}
+// 初始化資料庫
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    who TEXT,
+    userId TEXT,
+    category TEXT,
+    shop TEXT,
+    amount REAL
+  )`);
+  console.log('✅ SQLite 資料庫初始化');
+  loadAllRecords();  // 載入快取
+});
 
 async function loadAllRecords() {
-  try {
-    const sheet = doc.sheetsByTitle['記帳明細'];
-    const rows = await sheet.getRows();
-    memoryRecords = rows.map(row => ({
-      who: row.get('成員'),
-      userId: row.get('userId'),
-      category: row.get('類別'),
-      shop: row.get('店家'),
-      amount: parseFloat(row.get('金額')),
-      date: row.get('日期')
-    }));
-    console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
-  } catch (e) {
-    console.error('載入記錄錯誤：', e);
-  }
+  return new Promise((resolve) => {
+    db.all(`SELECT * FROM records ORDER BY date DESC LIMIT 1000`, (err, rows) => {
+      if (!err) {
+        memoryRecords = rows.map(r => ({
+          who: r.who, userId: r.userId, category: r.category,
+          shop: r.shop, amount: r.amount, date: r.date
+        }));
+        console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
+      }
+      resolve();
+    });
+  });
 }
 
-// 寫入 Google Sheets
+// 寫入記錄
 async function addRecord(memberName, userId, category, shop, amount) {
-  try {
-    const sheet = doc.sheetsByTitle['記帳明細'];
-    await sheet.addRow({
-      日期: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
-      成員: memberName,
-      類別: category,
-      店家: shop || '',
-      金額: amount,
-      userId: userId
-    });
-    // 同步到記憶體
-    const record = { who: memberName, userId, category, shop, amount, date: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}) };
-    memoryRecords.push(record);
-    if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(-1000);
-    console.log(`✅ 新增記錄：${memberName} ${amount}元`);
-  } catch (e) {
-    console.error('Sheets寫入錯誤：', e);
-  }
+  return new Promise((resolve, reject) => {
+    const date = new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
+    db.run(`INSERT INTO records (date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?)`,
+      [date, memberName, userId, category, shop || '', amount],
+      function(err) {
+        if (err) {
+          console.error('DB寫入錯誤：', err);
+          reject(err);
+        } else {
+          // 更新記憶體
+          const record = { who: memberName, userId, category, shop: shop || '', amount, date };
+          memoryRecords.unshift(record);  // 新增到最前
+          if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
+          console.log(`✅ 新增：${memberName} ${category} ${amount}元`);
+          resolve();
+        }
+      }
+    );
+  });
 }
 
 function getMemberName(userId) {
@@ -78,11 +69,26 @@ function getMemberName(userId) {
   return FAMILY[userId] || userId.slice(-8);
 }
 
-// Quick Reply 選單
-async function showMenu(replyToken) {
+async function replyText(replyToken, text) {
+  const fetch = (await import('node-fetch')).default;  // Node 18+ 動態 import
   await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
+    headers: { 
+      'Content-Type': 'application/json', 
+      'Authorization': `Bearer ${LINE_TOKEN}` 
+    },
+    body: JSON.stringify({ replyToken, messages: [{ type: 'text', text }] })
+  }).catch(e => console.error('回覆錯誤：', e));
+}
+
+async function showMenu(replyToken) {
+  const fetch = (await import('node-fetch')).default;
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json', 
+      'Authorization': `Bearer ${LINE_TOKEN}` 
+    },
     body: JSON.stringify({
       replyToken,
       messages: [{
@@ -93,8 +99,7 @@ async function showMenu(replyToken) {
             { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
             { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
             { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
-            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
-            { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '清空紀錄' } }
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } }
           ]
         }
       }]
@@ -102,28 +107,23 @@ async function showMenu(replyToken) {
   });
 }
 
-// 文字回覆
-async function replyText(replyToken, text) {
-  await fetch('https://api.line.me/v2/bot/message/reply', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
-    body: JSON.stringify({ replyToken, messages: [{ type: 'text', text }] })
-  }).catch(e => console.error('回覆錯誤：', e));
-}
-
-// 星期五提醒
+// 星期五晚上 9 點提醒
 cron.schedule('0 21 * * 5', async () => {
+  const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/broadcast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
-    body: JSON.stringify({ messages: [{ type: 'text', text: '記得今晚MARK齊數，陣間要結算啦:)' }] })
+    body: JSON.stringify({ 
+      messages: [{ type: 'text', text: '記得今晚MARK齊數，陣間要結算啦:)' }] 
+    })
   }).catch(e => console.error('提醒錯誤', e));
 }, { timezone: 'Asia/Taipei' });
 
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
-    if (event.type !== 'message' || event.message.type !== 'text') return res.status(200).send('OK');
+    if (event.type !== 'message' || event.message.type !== 'text') 
+      return res.status(200).send('OK');
 
     const text = event.message.text.trim();
     const replyToken = event.replyToken;
@@ -131,45 +131,35 @@ app.post('/webhook', async (req, res) => {
     const memberName = getMemberName(userId);
 
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
-    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250\n記帳後自動回選單！`);
-    if (text === '我的ID') return replyText(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
-    if (text === '清空紀錄') return replyText(replyToken, `🗑️ ${memberName} 已清空記憶體快取（Sheets保留）`);
+    
+    if (text === '📝 記帳說明') 
+      return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250\n記帳後自動回選單！`);
+    
+    if (text === '我的ID') 
+      return replyText(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
 
     if (text === '記帳清單') {
       if (!memoryRecords.length) return replyText(replyToken, `${memberName}，目前無記帳記錄！`);
       const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
-      const recent = memoryRecords.slice(-10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
-      return replyText(replyToken, `📊 ${memberName}（共 ${total} 元）\n${recent}`);
-    }
-
-    if (text === '本月總計') {
-      const now = new Date();
-      const monthRecords = memoryRecords.filter(r => {
-        const match = r.date.match(/(\d{4})\/(\d{1,2})/);
-        return match && parseInt(match[2]) - 1 === now.getMonth() && parseInt(match[1]) === now.getFullYear();
-      });
-      const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyText(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
+      const recent = memoryRecords.slice(0, 10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
+      return replyText(replyToken, `📊 ${memberName}（共 ${total.toLocaleString()} 元）\n${recent}`);
     }
 
     if (text === '本週支出') {
       const now = new Date();
       const lastSaturday = new Date(now);
-      lastSaturday.setDate(now.getDate() - (now.getDay() || 7) + 6);
-      lastSaturday.setHours(0, 0, 0, 0);
+      lastSaturday.setDate(now.getDate() - (now.getDay() || 7));
       
       const userRecords = memoryRecords.filter(r => {
-        const match = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-        if (!match) return false;
-        const rDate = new Date(`${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`);
+        const rDate = new Date(r.date);
         return rDate >= lastSaturday && r.userId === userId;
       });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
+      return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
     }
 
-    // 記帳
+    // 記帳語法：類別 [店家] 金額
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
       const category = parts[0];
@@ -177,7 +167,7 @@ app.post('/webhook', async (req, res) => {
       if (!isNaN(amount) && amount > 0) {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
         await addRecord(memberName, userId, category, shop, amount);
-        return replyText(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount}元`);
+        return replyText(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount.toLocaleString()}元\n👇 繼續記帳或點選單`);
       }
     }
 
@@ -188,17 +178,26 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-app.get('/', async (req, res) => {
-  const summary = {
-    totalRecords: memoryRecords.length,
-    totalAmount: memoryRecords.reduce((sum, r) => sum + r.amount, 0),
-    recent5: memoryRecords.slice(-5).map(r => `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`)
-  };
-  res.send(`<h1>📊 記帳 Bot 狀態</h1><pre>${JSON.stringify(summary, null, 2)}</pre>
-    <p><a href="https://docs.google.com/spreadsheets/d/${SHEET_ID}">🗂️ 開 Google Sheets</a></p>`);
+app.get('/', (req, res) => {
+  const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
+  const recent5 = memoryRecords.slice(0, 5).map(r => 
+    `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`
+  ).join('<br>');
+  
+  res.send(`<h1>📊 記帳 Bot 狀態 (SQLite)</h1>
+    <p>總筆數：${memoryRecords.length} | 總金額：${total.toLocaleString()} 元</p>
+    <h3>最新 5 筆：</h3><pre>${recent5}</pre>
+    <p><a href="/records.csv">下載 CSV</a></p>`);
 });
 
-initSheet().catch(console.error);
+app.get('/records.csv', (req, res) => {
+  const csv = ['日期,成員,類別,店家,金額,userId'].concat(
+    memoryRecords.map(r => `${r.date},"${r.who}","${r.category}","${r.shop}",${r.amount},${r.userId}`)
+  ).join('\n');
+  res.header('Content-Type', 'text/csv');
+  res.attachment('records.csv');
+  res.send(csv);
+});
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Bot @ ${port}`));
+app.listen(port, () => console.log(`Bot 運行於 port ${port}`));
