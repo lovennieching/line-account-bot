@@ -36,113 +36,99 @@ cron.schedule('0 21 * * 5', async () => {
   }
 }, { timezone: 'Asia/Taipei' });
 
-// Flex Message 按鈕選單
 const MENU_FLEX = {
-  type: 'flex',
-  altText: '📱 家庭記帳選單',
+  type: "flex",
+  altText: "家庭記帳選單",
   contents: {
-    type: 'bubble',
-    hero: {
-      type: 'image',
-      url: 'https://i.imgur.com/8z5Z5Z5.jpg', // 可換家庭圖片
-      size: 'full',
-      aspectRatio: '20:13',
-      aspectMode: 'cover'
-    },
+    type: "bubble",
     body: {
-      type: 'box',
-      layout: 'vertical',
+      type: "box",
+      layout: "vertical",
       contents: [
         {
-          type: 'text',
-          text: '💰 家庭記帳助手',
-          weight: 'bold',
-          size: 'lg'
+          type: "text",
+          text: "💰 家庭記帳助手",
+          weight: "bold",
+          size: "xl"
         },
         {
-          type: 'text',
-          text: '點擊下方按鈕快速操作',
-          size: 'sm',
-          color: '#666666',
-          margin: 'md'
-        }
-      ]
-    },
-    footer: {
-      type: 'box',
-      layout: 'vertical',
-      spacing: 'sm',
-      contents: [
+          type: "separator",
+          margin: "md"
+        },
         {
-          type: 'button',
-          style: 'primary',
-          height: 'sm',
+          type: "button",
           action: {
-            type: 'message',
-            label: '📝 即時記帳',
-            text: '📝 記帳說明'
+            type: "message",
+            label: "📝 即時記帳",
+            text: "📝 記帳說明"
           },
-          color: '#00b07f'
+          style: "primary",
+          margin: "md"
         },
         {
-          type: 'button',
-          style: 'primary',
-          height: 'sm',
+          type: "button",
           action: {
-            type: 'message',
-            label: '📊 記帳清單',
-            text: '記帳清單'
-          }
-        },
-        {
-          type: 'button',
-          style: 'primary',
-          height: 'sm',
-          action: {
-            type: 'message',
-            label: '📅 本月總計',
-            text: '本月總計'
-          }
-        },
-        {
-          type: 'button',
-          style: 'primary',
-          height: 'sm',
-          action: {
-            type: 'message',
-            label: '📈 本週支出',
-            text: '本週支出'
-          }
-        },
-        {
-          type: 'spacer',
-          size: 'sm'
-        },
-        {
-          type: 'button',
-          style: 'secondary',
-          height: 'sm',
-          action: {
-            type: 'message',
-            label: '🗑️ 清空紀錄',
-            text: '清空紀錄'
+            type: "message",
+            label: "📊 記帳清單",
+            text: "記帳清單"
           },
-          color: '#FF6B6B'
+          style: "primary",
+          margin: "md"
         },
         {
-          type: 'button',
-          style: 'secondary',
-          height: 'sm',
+          type: "button",
           action: {
-            type: 'message',
-            label: '🆔 我的ID',
-            text: '我的ID'
-          }
+            type: "message",
+            label: "📈 本週支出",
+            text: "本週支出"
+          },
+          style: "primary",
+          margin: "md"
+        },
+        {
+          type: "button",
+          action: {
+            type: "message",
+            label: "🆔 我的ID",
+            text: "我的ID"
+          },
+          style: "secondary",
+          margin: "md"
         }
       ]
     }
   }
 };
+3. 緊急測試版：先用文字按鈕
+如果 Flex 仍有問題，暫用Quick Reply（所有 LINE 版本都支援）：
+
+javascript
+// 取代 replyFlex 函數
+async function replyFlex(replyToken, flexMessage) {
+  // 先用 Quick Reply 文字按鈕
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json', 
+      'Authorization': `Bearer ${LINE_TOKEN}` 
+    },
+    body: JSON.stringify({ 
+      replyToken, 
+      messages: [{
+        type: 'text',
+        text: '👇 點擊下方按鈕快速操作',
+        quickReply: {
+          items: [
+            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } }
+          ]
+        }
+      }]
+    })
+  });
+}
 
 app.post('/webhook', async (req, res) => {
   try {
