@@ -4,7 +4,7 @@ const app = express();
 console.log('Dependencies loaded');
 app.use(express.json());
 
-const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;  // Render Environment Variables
+const LINE_TOKEN = process.env.LINE_TOKEN;  // Render Environment Variables
 
 let records = [];
 
