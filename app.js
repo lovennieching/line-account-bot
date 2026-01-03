@@ -12,16 +12,22 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY(/\\n/g, '\n');
 let doc;
 let memoryRecords = []; // 記憶體快取，提升查詢速度
 
-// 初始化 Google Sheets
+const { JWT } = require('google-auth-library');  // 新增這行
+
 async function initSheet() {
-  doc = new GoogleSpreadsheet(SHEET_ID);
-  await doc.useServiceAccountAuth({
+  const serviceAccountAuth = new JWT({
     client_email: SERVICE_EMAIL,
-    private_key: PRIVATE_KEY
+    key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),  // 修復換行
+    scopes: [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/drive'  // 若需分享/權限，可加 drive.file
+    ],
   });
+  
+  doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);  // 傳入 auth 到建構子
   await doc.loadInfo();
   console.log('✅ Google Sheets 已連線');
-  await loadAllRecords(); // 載入現有資料到記憶體
+  await loadAllRecords();
 }
 
 async function loadAllRecords() {
