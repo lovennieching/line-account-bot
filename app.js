@@ -1,23 +1,37 @@
 const express = require('express');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { JWT } = require('google-auth-library');  // 新增這行
 const app = express();
 app.use(express.json());
 
-const LINE_TOKEN = 'rs1z63zui+VBM34QAuCJMZ5uNv3BcwaGcgc4f0KzApm/F6q1GZd+UtSNnNbSR3QMZhZl0j/+evGxqXrVLf22xahmRhaauuZaaSwr1UTwNluQwFIstmM/dM4W9E/td5+E9APtWkRPc2KlQ9gy0+rTKQdB04t89/1O/w1cDnyilFU=';  // LINE Bot Token
+const LINE_TOKEN = '你的LINE_TOKEN';  // 移到 Environment Variables
 
-// Google Sheets 配置 - 請替換為你的設定
-const SHEET_ID = '1m-3kTts9M6ssi-N9B49kdzUHtf8q8HcQfP_mZX5347U';  // 從 Google Sheet URL 取得，例如 https://docs.google.com/spreadsheets/d/你的ID/edit
-const SHEET_NAME = 'Sheet1';  // 工作表名稱，第一行請設定標題：Date, Who, UserID, Category, Shop, Amount
-const SERVICE_ACCOUNT_EMAIL = 'line-bot@googoheyfinance.iam.gserviceaccount.com';  // 服務帳戶 Email
-const PRIVATE_KEY = `92900dbc5f13733378c49e5a12b3d2280803fda8`;  // 從 service account JSON 的 private_key 複製
+// 用環境變數 [web:58]
+const SHEET_ID = process.env.SHEET_ID;
+const SERVICE_ACCOUNT_EMAIL = process.env.SERVICE_ACCOUNT_EMAIL;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-let doc;  // Google Spreadsheet 實例
+let doc;
 
 async function initSheets() {
-   if (!SHEET_ID || !SERVICE_ACCOUNT_EMAIL || !PRIVATE_KEY) {
-    console.log('缺少 Google Sheets 環境變數');
+  if (!SHEET_ID || !SERVICE_ACCOUNT_EMAIL || !PRIVATE_KEY) {
+    console.log('❌ 缺少 Google Sheets 環境變數，使用本地模式');
     return;
   }
+  
+  const serviceAccountAuth = new JWT({
+    email: SERVICE_ACCOUNT_EMAIL,
+    key: PRIVATE_KEY,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  
+  doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);  // 只這一行
+  await doc.loadInfo();
+  console.log('✅ Google Sheets 已連接');
+}
+
+// 啟動時初始化
+initSheets().catch(console.error);
   
   doc = new GoogleSpreadsheet(SHEET_ID);
   
