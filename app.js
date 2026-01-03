@@ -167,14 +167,26 @@ app.post('/webhook', async (req, res) => {
 
     if (text === '本週支出') {
   const now = new Date();
-  const lastSaturday = new Date(now);
-  lastSaturday.setDate(now.getDate() - now.getDay());  // 修正：從週日算起，或調整邏輯
-  lastSaturday.setHours(0, 0, 0, 0);
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());  // 本週日 00:00
+  startOfWeek.setHours(0, 0, 0, 0);
   
   const userRecords = memoryRecords.filter(r => {
-    const rDate = new Date(r.iso_date || r.date);  // 優先 ISO
-    return rDate >= lastSaturday && r.userId === userId;
+    // 解析 zh-TW 日期：2026/1/3 上午8:45 → YYYY/M/D
+    const dateMatch = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+    if (!dateMatch) return false;
+    
+    const [, year, month, day] = dateMatch;
+    const rDate = new Date(year, month - 1, day);
+    rDate.setHours(0, 0, 0, 0);  // 只比日期
+    
+    return rDate >= startOfWeek && r.userId === userId;
   });
+  
+  const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
+  return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
+}
+
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
       return replyText(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
