@@ -3,7 +3,7 @@ const cron = require('node-cron');
 const app = express();
 app.use(express.json());
 
-const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const LINE_TOKEN = process.env.LINE_TOKEN;  // ← 已改
 
 let records = [];
 
@@ -61,18 +61,19 @@ app.post('/webhook', async (req, res) => {
       const now = new Date();
       const dayOfWeek = now.getDay();
       const lastSaturday = new Date(now);
-      lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);  // 上週六
+      lastSaturday.setDate(now.getDate() - (dayOfWeek || 7) + 6);
       lastSaturday.setHours(0, 0, 0, 0);
       
       const userRecords = records.filter(r => {
         const [dateStr] = r.date.split(' ');
-        const rDate = new Date(dateStr.replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/, '$1-$2-$3'));
+        const match = dateStr.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+        if (!match) return false;
+        const rDate = new Date(`${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`);
         return rDate >= lastSaturday && r.userId === userId;
       });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      const dateStr = lastSaturday.toLocaleDateString('zh-TW');
-      return replyAndEnd(replyToken, `📈 ${memberName}\n本週（${dateStr}至今）：${weekTotal} 元\n${userRecords.length} 筆`);
+      return replyAndEnd(replyToken, `📈 ${memberName}\n本週（上週六至今）：${weekTotal} 元\n${userRecords.length} 筆`);
     }
 
     if (text === '清空紀錄') {
@@ -87,9 +88,7 @@ app.post('/webhook', async (req, res) => {
       if (!isNaN(amount) && amount > 0) {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
         const record = {
-          who: memberName,
-          userId,
-          category, shop, amount,
+          who: memberName, userId, category, shop, amount,
           date: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})
         };
         records.push(record);
