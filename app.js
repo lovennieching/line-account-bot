@@ -1,16 +1,39 @@
 const express = require('express');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
 const app = express();
 app.use(express.json());
 
-const LINE_TOKEN = 'rs1z63zui+VBM34QAuCJMZ5uNv3BcwaGcgc4f0KzApm/F6q1GZd+UtSNnNbSR3QMZhZl0j/+evGxqXrVLf22xahmRhaauuZaaSwr1UTwNluQwFIstmM/dM4W9E/td5+E9APtWkRPc2KlQ9gy0+rTKQdB04t89/1O/w1cDnyilFU=';  // 改這裡
+const LINE_TOKEN = 'rs1z63zui+VBM34QAuCJMZ5uNv3BcwaGcgc4f0KzApm/F6q1GZd+UtSNnNbSR3QMZhZl0j/+evGxqXrVLf22xahmRhaauuZaaSwr1UTwNluQwFIstmM/dM4W9E/td5+E9APtWkRPc2KlQ9gy0+rTKQdB04t89/1O/w1cDnyilFU=';  // LINE Bot Token
 
-let records = [];
+// Google Sheets 配置 - 請替換為你的設定
+const SHEET_ID = '1m-3kTts9M6ssi-N9B49kdzUHtf8q8HcQfP_mZX5347U';  // 從 Google Sheet URL 取得，例如 https://docs.google.com/spreadsheets/d/你的ID/edit
+const SHEET_NAME = 'Sheet1';  // 工作表名稱，第一行請設定標題：Date, Who, UserID, Category, Shop, Amount
+const SERVICE_ACCOUNT_EMAIL = 'line-bot@googoheyfinance.iam.gserviceaccount.com';  // 服務帳戶 Email
+const PRIVATE_KEY = `92900dbc5f13733378c49e5a12b3d2280803fda8`;  // 從 service account JSON 的 private_key 複製
+
+let doc;  // Google Spreadsheet 實例
+
+async function initSheets() {
+  doc = new GoogleSpreadsheet(SHEET_ID);
+  
+  // 使用服務帳戶認證 [web:1][web:2]
+  await doc.useServiceAccountAuth({
+    client_email: SERVICE_ACCOUNT_EMAIL,
+    private_key: PRIVATE_KEY.replace(/\\n/g, '\n'),  // 處理 JSON 中的換行
+  });
+  
+  await doc.loadInfo();
+  console.log('Google Sheets 已連接');
+}
+
+// 啟動時初始化 Sheets
+initSheets().catch(console.error);
 
 function getMemberName(userId) {
   const FAMILY = {
     'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
     'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',    
-  };  // 之後填 userId
+  };
   return FAMILY[userId] || userId.slice(-8);
 }
 
@@ -29,29 +52,38 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (text === '記帳清單') {
-      if (records.length === 0) {
+      // 從 Google Sheets 讀取最近記錄 [web:1]
+      if (!doc) return replyAndEnd(replyToken, `${memberName}，Sheets 未準備好！`);
+      
+      const sheet = doc.sheetsByTitle[SHEET_NAME];
+      const rows = await sheet.getRows({ limit: 10 });
+      
+      if (rows.length === 0) {
         return replyAndEnd(replyToken, `${memberName}，目前無記帳記錄！`);
       }
-      const total = records.reduce((sum, r) => sum + r.amount, 0);
-      const recent = records.slice(-10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
-      return replyAndEnd(replyToken, `📊 ${memberName}（共 ${total} 元）\n${recent}`);
+      
+      const total = rows.reduce((sum, r) => sum + parseFloat(r.Amount || 0), 0);
+      const recent = rows.map(r => `${r.Date?.slice(5,10) || ''} ${r.Who} ${r.Amount}`).join('\n');
+      return replyAndEnd(replyToken, `📊 ${memberName}（共 ${total.toFixed(0)} 元）\n${recent}`);
     }
 
     if (text === '本月總計') {
+      if (!doc) return replyAndEnd(replyToken, `${memberName}，Sheets 未準備好！`);
+      
+      const sheet = doc.sheetsByTitle[SHEET_NAME];
+      const allRows = await sheet.getRows();
       const now = new Date();
-      const nowMonth = now.getMonth();
+      const nowMonth = now.getMonth() + 1;
       const nowYear = now.getFullYear();
       
-      const monthRecords = records.filter(r => {
-        const match = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-        if (!match) return false;
-        const year = parseInt(match[1]);
-        const month = parseInt(match[2]) - 1;
-        return month === nowMonth && year === nowYear;
+      const monthRecords = allRows.filter(r => {
+        if (!r.Date) return false;
+        const match = r.Date.match(/(\d{4})\/(\d{1,2})/);
+        return match && parseInt(match[2]) === nowMonth && parseInt(match[1]) === nowYear;
       });
       
-      const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal} 元\n${monthRecords.length} 筆`);
+      const monthTotal = monthRecords.reduce((sum, r) => sum + parseFloat(r.Amount || 0), 0);
+      return replyAndEnd(replyToken, `📅 ${memberName}\n本月：${monthTotal.toFixed(0)} 元\n${monthRecords.length} 筆`);
     }
 
     const parts = text.split(/\s+/);
@@ -61,17 +93,20 @@ app.post('/webhook', async (req, res) => {
       
       if (!isNaN(amount) && amount > 0) {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
-        const record = {
-          who: memberName,
-          userId,
-          category,
-          shop,
-          amount,
-          date: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})
-        };
+        const recordDate = new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
         
-        records.push(record);
-        if (records.length > 100) records = records.slice(-100);
+        // 寫入 Google Sheets [web:1][web:10]
+        if (doc) {
+          const sheet = doc.sheetsByTitle[SHEET_NAME];
+          await sheet.addRow({
+            Date: recordDate,
+            Who: memberName,
+            UserID: userId,
+            Category: category,
+            Shop: shop,
+            Amount: amount
+          });
+        }
         
         return replyAndEnd(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount}元`);
       }
@@ -87,12 +122,11 @@ app.post('/webhook', async (req, res) => {
 
 async function replyAndEnd(replyToken, text) {
   await reply(replyToken, text);
-  // 注意：此函式內部處理 res.send
 }
 
 async function reply(replyToken, text) {
   try {
-    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+    await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -108,7 +142,14 @@ async function reply(replyToken, text) {
   }
 }
 
-app.get('/', (req, res) => res.send(`Bot 運行中\n記錄：${records.length}`));
+app.get('/', async (req, res) => {
+  try {
+    const rowCount = doc ? (await doc.sheetsByTitle[SHEET_NAME]?.rowCount) || 0 : 0;
+    res.send(`Bot 運行中\n記錄：${rowCount}`);
+  } catch {
+    res.send('Bot 運行中\nSheets 未連接');
+  }
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Bot @ ${port}`));
