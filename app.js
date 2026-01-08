@@ -91,9 +91,9 @@ async function showMenu(replyToken) {
         quickReply: {
           items: [
             { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
-            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
-            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
-            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
+            { type: 'action', action: { type: 'message', label: '📊 本月清單', text: '📊 本月清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔我的ID' } },
             { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }
           ]
         }
@@ -195,29 +195,33 @@ app.post('/webhook', async (req, res) => {
 
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
     if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250`);
-    if (text === '我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
-    if (text === '記帳清單') {
+    if (text === '🆔我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
+    if (text === '📊 本月清單') {
       const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
+      // 強制設定為台灣時間的月份與年份
+      const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+      const currentMonth = twNow.getMonth();
+      const currentYear = twNow.getFullYear();
 
-      // 篩選出本月的紀錄
       const monthRecords = memoryRecords.filter(r => {
-        const recordDate = new Date(r.iso_date);
-        return recordDate.getMonth() === currentMonth && recordDate.getFullYear() === currentYear;
+        // 解析存放在 iso_date 欄位的字串
+        const rDate = new Date(r.iso_date);
+        return rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
       });
 
       if (monthRecords.length === 0) {
         return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
       }
 
-      // 格式化紀錄：1/2 列小芬 全聯 $357
-      // 注意：PostgreSQL 抓下來是時間由新到舊 (DESC)，若想按日期由舊到新顯示，可加 .reverse()
-      const listContent = monthRecords.slice().reverse().map(r => {
+      // 排序：按時間由舊到新
+      const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
-        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`; // 格式：M/D
-        const shopStr = r.shop ? ` ${r.shop}` : ''; // 如果有店家才顯示空格+店家
-        return `${dateStr} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        // 使用本地時區顯示 M/D
+        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
+        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        
+        const shopStr = r.shop ? ` ${r.shop}` : ''; 
+        return `${month}/${day} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
       return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
