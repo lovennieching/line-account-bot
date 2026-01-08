@@ -92,8 +92,8 @@ async function showMenu(replyToken) {
           items: [
             { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
             { type: 'action', action: { type: 'message', label: '📊 本月清單', text: '📊 本月清單' } },
-            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈本週支出' } },
-            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔我的ID' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈 本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔 我的ID' } },
             { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }
           ]
         }
@@ -194,8 +194,8 @@ app.post('/webhook', async (req, res) => {
     const memberName = getMemberName(userId);
 
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
-    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250`);
-    if (text === '🆔我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
+    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 滷肉飯 180\n📝 超市 全聯 250`);
+    if (text === '🆔 我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
     if (text === '📊 本月清單') {
       const now = new Date();
       // 強制設定為台灣時間的月份與年份
@@ -226,6 +226,43 @@ app.post('/webhook', async (req, res) => {
 
       return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
     }
+    
+if (text === '📈 本週支出') {
+      const now = new Date();
+      // 取得台灣時間的「今天」
+      const today = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+      
+      // 計算本週一的日期 (0 是週日, 1 是週一...)
+      const dayOfWeek = today.getDay(); 
+      const diff = today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
+      const startOfWeek = new Date(today.setDate(diff));
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      // 篩選本週且屬於該使用者的紀錄
+      const weekRecords = memoryRecords.filter(r => {
+        const rDate = new Date(r.iso_date);
+        // 注意：這裡統一使用小寫 r.userid
+        return rDate >= startOfWeek && (r.userid === userId || r.userId === userId);
+      });
+
+      if (weekRecords.length === 0) {
+        return replyText(replyToken, `📈 ${memberName}，本週目前沒有你的紀錄喔！`);
+      }
+
+      const weekTotal = weekRecords.reduce((sum, r) => sum + r.amount, 0);
+      
+      // 格式化本週清單
+      const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
+        const d = new Date(r.iso_date);
+        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
+        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        const shopStr = r.shop ? ` ${r.shop}` : ''; 
+        return `${month}/${day} ${r.category}${shopStr} $${Math.round(r.amount)}`;
+      }).join('\n');
+
+      return replyText(replyToken, `📈 ${memberName} 本週支出：\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
+    }
+    
     if (text === '🗑️ 清空紀錄') {
       await pool.query('DELETE FROM records');
       await loadAllRecords(); // 重新整理記憶體
