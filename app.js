@@ -82,49 +82,23 @@ async function showMenu(replyToken) {
   const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json', 
-      'Authorization': `Bearer ${LINE_TOKEN}` 
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
     body: JSON.stringify({
-      replyToken: replyToken,
+      replyToken,
       messages: [{
-        type: 'template',
-        altText: '記帳管理員選單',
-        template: {
-          type: 'buttons',
-          thumbnailImageUrl: 'https://i.imgur.com/pRdaAmS.jpg', // 你可以更換成你喜歡的圖片
-          imageAspectRatio: 'rectangle',
-          imageSize: 'cover',
-          title: '記帳管理員',
-          text: '請選擇操作功能：',
-          actions: [
-            {
-              type: 'message',
-              label: '📊 記帳清單',
-              text: '📊 記帳清單'
-            },
-            {
-              type: 'message',
-              label: '📈 本週支出',
-              text: '📈 本週支出'
-            },
-            {
-              type: 'uri',
-              label: '🌐 網頁管理介面',
-              uri: `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'your-app-name.onrender.com'}`
-            },
-            {
-              type: 'postback',
-              label: 'ℹ️ 記帳說明',
-              data: 'action=instruction',
-              displayText: 'ℹ️ 記帳說明'
-            }
+        type: 'text',
+        text: '👇 點擊下方按鈕快速操作：',
+        quickReply: {
+          items: [
+            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📊 本月清單', text: '📊 本月清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈 本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔 我的ID' } },
           ]
         }
       }]
     })
-  }).catch(e => console.error('按鈕選單錯誤：', e));
+  }).catch(e => console.error('選單錯誤：', e));
 }
 
 // --- 路由 ---
@@ -212,28 +186,7 @@ app.post('/webhook', async (req, res) => {
     const event = req.body.events[0];
     if (!event || event.type !== 'message' || event.message.type !== 'text') 
       return res.status(200).send('OK');
-    if (event.type === 'postback') {
-      const data = event.postback.data;
-      if (data === 'action=instruction') {
-        const memberName = getMemberName(event.source.userId);
-        return replyText(event.replyToken, `${memberName} 記帳教學：\n📝 格式：項目 內容(選填) 金額\n例如：餐飲 180\n例如：超市 全家 250`);
-      }
-    }
-    // ----------------------------
 
-    if (event.type !== 'message' || event.message.type !== 'text') 
-      return res.status(200).send('OK');if (event.type === 'postback') {
-      const data = event.postback.data;
-      if (data === 'action=instruction') {
-        const memberName = getMemberName(event.source.userId);
-        return replyText(event.replyToken, `${memberName} 記帳教學：\n📝 格式：項目 內容(選填) 金額\n例如：餐飲 180\n例如：超市 全家 250`);
-      }
-    }
-    // ----------------------------
-
-    if (event.type !== 'message' || event.message.type !== 'text') 
-      return res.status(200).send('OK');
-    
     const text = event.message.text.trim();
     const replyToken = event.replyToken;
     const userId = event.source.userId;
@@ -309,7 +262,7 @@ if (text === '📈 本週支出') {
       return replyText(replyToken, `📈 ${memberName} 本週支出：\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
     }
     
-    if (text === '🗑️ 清空紀錄') {
+    if (text === '清空紀錄') {
       await pool.query('DELETE FROM records');
       await loadAllRecords(); // 重新整理記憶體
       return replyText(replyToken, '🗑️ 已清空紀錄');
