@@ -148,9 +148,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   fs.createReadStream(req.file.path)
     .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId']))
     .on('data', (data) => {
-      // 更加嚴格的檢查：如果「金額」不是數字，或者是標題文字，就跳過
-      const amount = parseFloat(data['金額']);
-      if (data['日期'] === '日期' || isNaN(amount)) return; 
+      if (data['日期'] === '日期' || !data['金額']) return;
       results.push(data);
     })
     .on('end', async () => {
@@ -200,30 +198,26 @@ app.post('/webhook', async (req, res) => {
     if (text === '我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
     if (text === '記帳清單') {
       const now = new Date();
-      // 強制設定為台灣時間的月份與年份
-      const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
-      const currentMonth = twNow.getMonth();
-      const currentYear = twNow.getFullYear();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
 
+      // 篩選出本月的紀錄
       const monthRecords = memoryRecords.filter(r => {
-        // 解析存放在 iso_date 欄位的字串
-        const rDate = new Date(r.iso_date);
-        return rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
+        const recordDate = new Date(r.iso_date);
+        return recordDate.getMonth() === currentMonth && recordDate.getFullYear() === currentYear;
       });
 
       if (monthRecords.length === 0) {
         return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
       }
 
-      // 排序：按時間由舊到新
-      const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
+      // 格式化紀錄：1/2 列小芬 全聯 $357
+      // 注意：PostgreSQL 抓下來是時間由新到舊 (DESC)，若想按日期由舊到新顯示，可加 .reverse()
+      const listContent = monthRecords.slice().reverse().map(r => {
         const d = new Date(r.iso_date);
-        // 使用本地時區顯示 M/D
-        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
-        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
-        
-        const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`; // 格式：M/D
+        const shopStr = r.shop ? ` ${r.shop}` : ''; // 如果有店家才顯示空格+店家
+        return `${dateStr} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
       return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
