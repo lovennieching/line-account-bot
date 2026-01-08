@@ -1,75 +1,92 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg'); // 改用 pg
 const cron = require('node-cron');
 const app = express();
 app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_TOKEN;
-const db = new sqlite3.Database('records.db');
+// 必須在環境變數設定 DATABASE_URL
+const isProduction = process.env.NODE_ENV === 'production';
+const connectionString = process.env.DATABASE_URL;
+
+const pool = new Pool({
+  connectionString: connectionString,
+  ssl: isProduction ? { rejectUnauthorized: false } : false // 雲端資料庫通常需要 SSL
+});
+
 let memoryRecords = [];
 
 // 初始化資料庫
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT,
-    iso_date TEXT,
-    who TEXT,
-    userId TEXT,
-    category TEXT,
-    shop TEXT,
-    amount REAL
-  )`);
-  console.log('✅ SQLite 初始化完成');
-  loadAllRecords();
-});
+(async () => {
+  try {
+    const client = await pool.connect();
+    await client.query(`CREATE TABLE IF NOT EXISTS records (
+      id SERIAL PRIMARY KEY,
+      date TEXT,
+      iso_date TEXT,
+      who TEXT,
+      userId TEXT,
+      category TEXT,
+      shop TEXT,
+      amount REAL
+    )`);
+    console.log('✅ PostgreSQL 初始化完成');
+    client.release();
+    await loadAllRecords();
+  } catch (err) {
+    console.error('❌ 資料庫連線失敗:', err);
+  }
+})();
 
 async function loadAllRecords() {
-  return new Promise((resolve) => {
-    db.all(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`, (err, rows) => {
-      if (!err) {
-        memoryRecords = rows.map(r => ({
-          ...r,
-          date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})
-        }));
-        console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
-      }
-      resolve();
-    });
-  });
+  try {
+    const result = await pool.query(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`);
+    memoryRecords = result.rows.map(r => ({
+      ...r,
+      date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+    }));
+    console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
+  } catch (err) {
+    console.error('讀取記錄失敗:', err);
+  }
 }
 
 async function addRecord(memberName, userId, category, shop, amount) {
-  return new Promise((resolve, reject) => {
-    const now = new Date();
-    const stmtDate = now.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'});
-    const isoDate = now.toISOString();
+  const now = new Date();
+  const stmtDate = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+  const isoDate = now.toISOString();
+
+  // PostgreSQL 語法差異：使用 $1, $2 替代 ?，並且使用 RETURNING id 取得新 ID
+  const query = `
+    INSERT INTO records (date, iso_date, who, userId, category, shop, amount) 
+    VALUES ($1, $2, $3, $4, $5, $6, $7) 
+    RETURNING id
+  `;
+  
+  const values = [stmtDate, isoDate, memberName, userId, category, shop || '', amount];
+
+  try {
+    const res = await pool.query(query, values);
+    const newId = res.rows[0].id;
     
-    db.run(`INSERT INTO records (date, iso_date, who, userId, category, shop, amount) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [stmtDate, isoDate, memberName, userId, category, shop || '', amount],
-      function(err) {
-        if (err) {
-          console.error('DB寫入錯誤：', err);
-          reject(err);
-        } else {
-          const record = { 
-            id: this.lastID, 
-            date: stmtDate, 
-            iso_date: isoDate, 
-            who: memberName, 
-            userId, 
-            category, 
-            shop: shop || '', 
-            amount 
-          };
-          memoryRecords.unshift(record);
-          if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
-          console.log(`✅ 新增：${memberName} ${category} ${amount}元`);
-          resolve();
-        }
-      }
-    );
-  });
+    const record = { 
+      id: newId, 
+      date: stmtDate, 
+      iso_date: isoDate, 
+      who: memberName, 
+      userId, 
+      category, 
+      shop: shop || '', 
+      amount 
+    };
+    
+    memoryRecords.unshift(record);
+    if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
+    console.log(`✅ 新增：${memberName} ${category} ${amount}元`);
+  } catch (err) {
+    console.error('DB寫入錯誤：', err);
+    throw err;
+  }
 }
 
 function getMemberName(userId) {
@@ -105,15 +122,15 @@ async function showMenu(replyToken) {
       messages: [{
         type: 'text',
         text: '👇 點擊下方按鈕快速操作：',
-       quickReply: {
-  items: [
-    { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
-    { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
-    { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
-    { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
-    { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }  // 🔥 新增這行
-  ]
-}
+        quickReply: {
+          items: [
+            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
+            { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }
+          ]
+        }
       }]
     })
   }).catch(e => console.error('選單錯誤：', e));
@@ -131,7 +148,6 @@ cron.schedule('0 21 * * 5', async () => {
   }).catch(e => console.error('提醒錯誤', e));
 }, { timezone: 'Asia/Taipei' });
 
-// ✅ 修復後的完整 webhook（第193行問題已解決）
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
@@ -161,7 +177,7 @@ app.post('/webhook', async (req, res) => {
     if (text === '本週支出') {
       const now = new Date();
       const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - (now.getDay() || 7) + 1);  // 週一開始
+      startOfWeek.setDate(now.getDate() - (now.getDay() || 7) + 1); 
       startOfWeek.setHours(0, 0, 0, 0);
       
       const userRecords = memoryRecords.filter(r => {
@@ -170,22 +186,21 @@ app.post('/webhook', async (req, res) => {
         const [, year, month, day] = dateMatch;
         const rDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
         rDate.setHours(0, 0, 0, 0);
-        return rDate >= startOfWeek && r.userId === userId;  // 只算個人
+        return rDate >= startOfWeek && r.userId === userId; 
       });
       
       const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
       return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
     }
 
-if (text === '🗑️ 清空紀錄') {
-  memoryRecords = [];
-  db.exec('DELETE FROM records', () => {
-    replyText(replyToken, `${memberName} 已清空所有記錄！`);
-  });
-  return;
-}
+    if (text === '🗑️ 清空紀錄') {
+      memoryRecords = [];
+      // PostgreSQL 清空語法
+      await pool.query('DELETE FROM records');
+      await replyText(replyToken, `${memberName} 已清空所有記錄！`);
+      return;
+    }
     
-    // 記帳語法：類別 [店家] 金額
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
       const category = parts[0];
@@ -210,7 +225,7 @@ app.get('/', (req, res) => {
     `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`
   ).join('<br>');
   
-  res.send(`<h1>📊 記帳 Bot 狀態 (SQLite)</h1>
+  res.send(`<h1>📊 記帳 Bot 狀態 (PostgreSQL)</h1>
     <p>總筆數：${memoryRecords.length} | 總金額：${total.toLocaleString()} 元</p>
     <h3>最新 5 筆：</h3><pre>${recent5}</pre>
     <p><a href="/records.csv">下載 CSV</a></p>`);
