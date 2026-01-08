@@ -212,7 +212,28 @@ app.post('/webhook', async (req, res) => {
     const event = req.body.events[0];
     if (!event || event.type !== 'message' || event.message.type !== 'text') 
       return res.status(200).send('OK');
+    if (event.type === 'postback') {
+      const data = event.postback.data;
+      if (data === 'action=instruction') {
+        const memberName = getMemberName(event.source.userId);
+        return replyText(event.replyToken, `${memberName} 記帳教學：\n📝 格式：項目 內容(選填) 金額\n例如：餐飲 180\n例如：超市 全家 250`);
+      }
+    }
+    // ----------------------------
 
+    if (event.type !== 'message' || event.message.type !== 'text') 
+      return res.status(200).send('OK');if (event.type === 'postback') {
+      const data = event.postback.data;
+      if (data === 'action=instruction') {
+        const memberName = getMemberName(event.source.userId);
+        return replyText(event.replyToken, `${memberName} 記帳教學：\n📝 格式：項目 內容(選填) 金額\n例如：餐飲 180\n例如：超市 全家 250`);
+      }
+    }
+    // ----------------------------
+
+    if (event.type !== 'message' || event.message.type !== 'text') 
+      return res.status(200).send('OK');
+    
     const text = event.message.text.trim();
     const replyToken = event.replyToken;
     const userId = event.source.userId;
