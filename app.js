@@ -26,12 +26,13 @@ let memoryRecords = [];
 (async () => {
   try {
     const client = await pool.connect();
+    // 這裡將欄位名稱統一為小寫 userid 以避免 PostgreSQL 大小寫問題
     await client.query(`CREATE TABLE IF NOT EXISTS records (
       id SERIAL PRIMARY KEY,
       date TEXT,
       iso_date TEXT,
       who TEXT,
-      userId TEXT,
+      userid TEXT,
       category TEXT,
       shop TEXT,
       amount REAL
@@ -49,6 +50,8 @@ async function loadAllRecords() {
     const result = await pool.query(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`);
     memoryRecords = result.rows.map(r => ({
       ...r,
+      // 確保 memoryRecords 中的 key 是 userId，方便後續程式碼讀取
+      userId: r.userid, 
       date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
     }));
     console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
@@ -101,7 +104,6 @@ async function showMenu(replyToken) {
 
 // --- 路由 ---
 
-// 1. 首頁與匯入介面
 app.get('/', (req, res) => {
   const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
   const recent5 = memoryRecords.slice(0, 5).map(r => 
@@ -128,17 +130,16 @@ app.get('/', (req, res) => {
   `);
 });
 
-// 2. CSV 導出
 app.get('/records.csv', (req, res) => {
+  // 修正：確保讀取 memoryRecords 時使用正確的 key
   const csvData = ['日期,成員,類別,店家,金額,userId'].concat(
-    memoryRecords.map(r => `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},${r.userId}`)
+    memoryRecords.map(r => `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}"`)
   ).join('\n');
   res.header('Content-Type', 'text/csv; charset=utf-8');
   res.attachment('records.csv');
-  res.send('\uFEFF' + csvData); // 加入 BOM 解決 Excel 亂碼
+  res.send('\uFEFF' + csvData); 
 });
 
-// 3. CSV 匯入邏輯
 app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   if (!req.file) return res.status(400).send('未上傳檔案');
   const clearOld = req.body.clearOld === 'yes';
@@ -158,9 +159,12 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         
         for (const row of results) {
           const amount = parseFloat(row['金額']);
-          const isoDate = new Date(row['日期']).toISOString();
+          // 容錯：若 CSV 日期解析失敗則用現在
+          let isoDate;
+          try { isoDate = new Date(row['日期']).toISOString(); } catch(e) { isoDate = new Date().toISOString(); }
+          
           await client.query(
-            `INSERT INTO records (date, iso_date, who, userId, category, shop, amount) 
+            `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) 
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
           );
@@ -178,7 +182,6 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
     });
 });
 
-// 4. LINE Webhook
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
@@ -190,7 +193,6 @@ app.post('/webhook', async (req, res) => {
     const userId = event.source.userId;
     const memberName = getMemberName(userId);
 
-    // 功能判斷
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
     if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250`);
     if (text === '我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
@@ -201,11 +203,10 @@ app.post('/webhook', async (req, res) => {
     }
     if (text === '🗑️ 清空紀錄') {
       await pool.query('DELETE FROM records');
-      memoryRecords = [];
+      await loadAllRecords(); // 重新整理記憶體
       return replyText(replyToken, '🗑️ 已清空紀錄');
     }
 
-    // 記帳語法解析
     const parts = text.split(/\s+/);
     if (parts.length >= 2) {
       const amount = parseFloat(parts[parts.length - 1]);
@@ -215,8 +216,9 @@ app.post('/webhook', async (req, res) => {
         const now = new Date();
         const dateStr = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
         
+        // 修正：這裡使用 userid (小寫)
         await pool.query(
-          `INSERT INTO records (date, iso_date, who, userId, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [dateStr, now.toISOString(), memberName, userId, category, shop, amount]
         );
         await loadAllRecords();
@@ -230,7 +232,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// 排程提醒 (每週五 21:00)
 cron.schedule('0 21 * * 5', async () => {
   const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/broadcast', {
