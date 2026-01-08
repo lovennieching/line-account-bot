@@ -1,244 +1,67 @@
-const express = require('express');
-const { Pool } = require('pg'); // 改用 pg
-const cron = require('node-cron');
-const app = express();
-app.use(express.json());
+const multer = require('multer');
+const csv = require('csv-parser');
+const fs = require('fs');
+const upload = multer({ dest: 'uploads/' }); // 設定暫存目錄
 
-const LINE_TOKEN = process.env.LINE_TOKEN;
-// 必須在環境變數設定 DATABASE_URL
-const isProduction = process.env.NODE_ENV === 'production';
-const connectionString = process.env.DATABASE_URL;
-
-const pool = new Pool({
-  connectionString: connectionString,
-  ssl: isProduction ? { rejectUnauthorized: false } : false // 雲端資料庫通常需要 SSL
-});
-
-let memoryRecords = [];
-
-// 初始化資料庫
-(async () => {
-  try {
-    const client = await pool.connect();
-    await client.query(`CREATE TABLE IF NOT EXISTS records (
-      id SERIAL PRIMARY KEY,
-      date TEXT,
-      iso_date TEXT,
-      who TEXT,
-      userId TEXT,
-      category TEXT,
-      shop TEXT,
-      amount REAL
-    )`);
-    console.log('✅ PostgreSQL 初始化完成');
-    client.release();
-    await loadAllRecords();
-  } catch (err) {
-    console.error('❌ 資料庫連線失敗:', err);
-  }
-})();
-
-async function loadAllRecords() {
-  try {
-    const result = await pool.query(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`);
-    memoryRecords = result.rows.map(r => ({
-      ...r,
-      date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
-    }));
-    console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
-  } catch (err) {
-    console.error('讀取記錄失敗:', err);
-  }
-}
-
-async function addRecord(memberName, userId, category, shop, amount) {
-  const now = new Date();
-  const stmtDate = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-  const isoDate = now.toISOString();
-
-  // PostgreSQL 語法差異：使用 $1, $2 替代 ?，並且使用 RETURNING id 取得新 ID
-  const query = `
-    INSERT INTO records (date, iso_date, who, userId, category, shop, amount) 
-    VALUES ($1, $2, $3, $4, $5, $6, $7) 
-    RETURNING id
-  `;
-  
-  const values = [stmtDate, isoDate, memberName, userId, category, shop || '', amount];
-
-  try {
-    const res = await pool.query(query, values);
-    const newId = res.rows[0].id;
-    
-    const record = { 
-      id: newId, 
-      date: stmtDate, 
-      iso_date: isoDate, 
-      who: memberName, 
-      userId, 
-      category, 
-      shop: shop || '', 
-      amount 
-    };
-    
-    memoryRecords.unshift(record);
-    if (memoryRecords.length > 1000) memoryRecords = memoryRecords.slice(0, 1000);
-    console.log(`✅ 新增：${memberName} ${category} ${amount}元`);
-  } catch (err) {
-    console.error('DB寫入錯誤：', err);
-    throw err;
-  }
-}
-
-function getMemberName(userId) {
-  const FAMILY = {
-    'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
-    'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',    
-  };
-  return FAMILY[userId] || userId.slice(-8);
-}
-
-async function replyText(replyToken, text) {
-  const fetch = (await import('node-fetch')).default;
-  await fetch('https://api.line.me/v2/bot/message/reply', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json', 
-      'Authorization': `Bearer ${LINE_TOKEN}` 
-    },
-    body: JSON.stringify({ replyToken, messages: [{ type: 'text', text }] })
-  }).catch(e => console.error('回覆錯誤：', e));
-}
-
-async function showMenu(replyToken) {
-  const fetch = (await import('node-fetch')).default;
-  await fetch('https://api.line.me/v2/bot/message/reply', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json', 
-      'Authorization': `Bearer ${LINE_TOKEN}` 
-    },
-    body: JSON.stringify({
-      replyToken,
-      messages: [{
-        type: 'text',
-        text: '👇 點擊下方按鈕快速操作：',
-        quickReply: {
-          items: [
-            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
-            { type: 'action', action: { type: 'message', label: '📊 記帳清單', text: '記帳清單' } },
-            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '本週支出' } },
-            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '我的ID' } },
-            { type: 'action', action: { type: 'message', label: '🗑️ 清空紀錄', text: '🗑️ 清空紀錄' } }
-          ]
-        }
-      }]
-    })
-  }).catch(e => console.error('選單錯誤：', e));
-}
-
-// 星期五晚上9點全群提醒
-cron.schedule('0 21 * * 5', async () => {
-  const fetch = (await import('node-fetch')).default;
-  await fetch('https://api.line.me/v2/bot/message/broadcast', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
-    body: JSON.stringify({ 
-      messages: [{ type: 'text', text: '記得今晚MARK齊數，陣間要結算啦:)' }] 
-    })
-  }).catch(e => console.error('提醒錯誤', e));
-}, { timezone: 'Asia/Taipei' });
-
-app.post('/webhook', async (req, res) => {
-  try {
-    const event = req.body.events[0];
-    if (event.type !== 'message' || event.message.type !== 'text') 
-      return res.status(200).send('OK');
-
-    const text = event.message.text.trim();
-    const replyToken = event.replyToken;
-    const userId = event.source.userId;
-    const memberName = getMemberName(userId);
-
-    if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
-    
-    if (text === '📝 記帳說明') 
-      return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250\n記帳後自動回選單！`);
-    
-    if (text === '我的ID') 
-      return replyText(replyToken, `👤 ${memberName}\nID：\`${userId}\``);
-
-    if (text === '記帳清單') {
-      if (!memoryRecords.length) return replyText(replyToken, `${memberName}，目前無記帳記錄！`);
-      const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
-      const recent = memoryRecords.slice(0, 10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
-      return replyText(replyToken, `📊 ${memberName}（共 ${total.toLocaleString()} 元）\n${recent}`);
-    }
-
-    if (text === '本週支出') {
-      const now = new Date();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - (now.getDay() || 7) + 1); 
-      startOfWeek.setHours(0, 0, 0, 0);
-      
-      const userRecords = memoryRecords.filter(r => {
-        const dateMatch = r.date.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-        if (!dateMatch) return false;
-        const [, year, month, day] = dateMatch;
-        const rDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        rDate.setHours(0, 0, 0, 0);
-        return rDate >= startOfWeek && r.userId === userId; 
-      });
-      
-      const weekTotal = userRecords.reduce((sum, r) => sum + r.amount, 0);
-      return replyText(replyToken, `📈 ${memberName}\n本週（${startOfWeek.toLocaleDateString('zh-TW')}至今）：${weekTotal.toLocaleString()} 元\n${userRecords.length} 筆`);
-    }
-
-    if (text === '🗑️ 清空紀錄') {
-      memoryRecords = [];
-      // PostgreSQL 清空語法
-      await pool.query('DELETE FROM records');
-      await replyText(replyToken, `${memberName} 已清空所有記錄！`);
-      return;
-    }
-    
-    const parts = text.split(/\s+/);
-    if (parts.length >= 2) {
-      const category = parts[0];
-      const amount = parseFloat(parts[parts.length - 1]);
-      if (!isNaN(amount) && amount > 0) {
-        const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
-        await addRecord(memberName, userId, category, shop, amount);
-        return replyText(replyToken, `✅ ${memberName}：${category} ${shop || ''}${amount.toLocaleString()}元\n👇 繼續記帳或點選單`);
-      }
-    }
-
-    return showMenu(replyToken);
-  } catch (error) {
-    console.error('Webhook錯誤：', error);
-    res.status(200).send('OK');
-  }
-});
-
+// --- 在 app.get('/') 的 HTML 中加入上傳表單 ---
 app.get('/', (req, res) => {
   const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
   const recent5 = memoryRecords.slice(0, 5).map(r => 
     `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`
   ).join('<br>');
   
-  res.send(`<h1>📊 記帳 Bot 狀態 (PostgreSQL)</h1>
+  res.send(`
+    <h1>📊 記帳 Bot 狀態 (PostgreSQL)</h1>
     <p>總筆數：${memoryRecords.length} | 總金額：${total.toLocaleString()} 元</p>
     <h3>最新 5 筆：</h3><pre>${recent5}</pre>
-    <p><a href="/records.csv">下載 CSV</a></p>`);
+    <hr>
+    <h3>備份與匯入</h3>
+    <p><a href="/records.csv">📥 下載目前 CSV 備份</a></p>
+    <form action="/import-csv" method="post" enctype="multipart/form-data">
+      <label>📤 匯入備份 CSV：</label>
+      <input type="file" name="csvFile" accept=".csv" required>
+      <button type="submit">開始匯入</button>
+    </form>
+    <p style="color: gray; font-size: 0.8em;">* 匯入格式必須與下載的 CSV 格式一致</p>
+  `);
 });
 
-app.get('/records.csv', (req, res) => {
-  const csv = ['日期,成員,類別,店家,金額,userId'].concat(
-    memoryRecords.map(r => `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},${r.userId}`)
-  ).join('\n');
-  res.header('Content-Type', 'text/csv');
-  res.attachment('records.csv');
-  res.send(csv);
-});
+// --- 新增匯入 CSV 的 API ---
+app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
+  if (!req.file) return res.status(400).send('未上傳檔案');
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`✅ Bot 運行於 port ${port}`));
+  const results = [];
+  fs.createReadStream(req.file.path)
+    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId'])) // 對應你匯出的標題
+    .on('data', (data) => {
+      // 跳過標題列（如果 CSV 包含標題的話）
+      if (data['日期'] === '日期') return;
+      results.push(data);
+    })
+    .on('end', async () => {
+      try {
+        console.log(`開始匯入 ${results.length} 筆資料...`);
+        
+        for (const row of results) {
+          // 將 CSV 格式轉回資料庫格式
+          const amount = parseFloat(row['金額']);
+          const isoDate = new Date(row['日期']).toISOString(); // 假設日期格式可辨識
+
+          await pool.query(
+            `INSERT INTO records (date, iso_date, who, userId, category, shop, amount) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
+          );
+        }
+
+        // 刪除暫存檔並更新記憶體
+        fs.unlinkSync(req.file.path);
+        await loadAllRecords(); 
+        
+        res.send(`<h2>✅ 成功匯入 ${results.length} 筆紀錄！</h2><a href="/">回到首頁</a>`);
+      } catch (err) {
+        console.error('匯入失敗:', err);
+        res.status(500).send('匯入過程中發生錯誤');
+      }
+    });
+});
