@@ -221,7 +221,7 @@ app.post('/webhook', async (req, res) => {
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
+        return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
 
       return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
