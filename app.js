@@ -221,7 +221,7 @@ app.post('/webhook', async (req, res) => {
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        return `${month}/${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
 
       return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
@@ -257,7 +257,7 @@ if (text === '📈 本週支出') {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day} ${r.category}${shopStr} $${Math.round(r.amount)}`;
+        return `${month}${day} ${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
 
       return replyText(replyToken, `📈 ${memberName} 本週支出：\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
