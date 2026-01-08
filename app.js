@@ -197,9 +197,30 @@ app.post('/webhook', async (req, res) => {
     if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 餐飲 180\n📝 超市 全家 250`);
     if (text === '我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
     if (text === '記帳清單') {
-      const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
-      const recent = memoryRecords.slice(0, 10).map(r => `${r.date.slice(5,10)} ${r.who} ${r.amount}`).join('\n');
-      return replyText(replyToken, `📊 共 ${total.toLocaleString()} 元\n${recent}`);
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      // 篩選出本月的紀錄
+      const monthRecords = memoryRecords.filter(r => {
+        const recordDate = new Date(r.iso_date);
+        return recordDate.getMonth() === currentMonth && recordDate.getFullYear() === currentYear;
+      });
+
+      if (monthRecords.length === 0) {
+        return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
+      }
+
+      // 格式化紀錄：1/2 列小芬 全聯 $357
+      // 注意：PostgreSQL 抓下來是時間由新到舊 (DESC)，若想按日期由舊到新顯示，可加 .reverse()
+      const listContent = monthRecords.slice().reverse().map(r => {
+        const d = new Date(r.iso_date);
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`; // 格式：M/D
+        const shopStr = r.shop ? ` ${r.shop}` : ''; // 如果有店家才顯示空格+店家
+        return `${dateStr} ${r.who}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+      }).join('\n');
+
+      return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
     }
     if (text === '🗑️ 清空紀錄') {
       await pool.query('DELETE FROM records');
