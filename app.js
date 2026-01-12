@@ -255,7 +255,7 @@ if (text === '📈 本週支出') {
 
       if (weekRecords.length === 0) {
         // 格式化一下日期顯示在訊息中，方便確認起始日
-        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
         return replyText(replyToken, `📈 ${memberName}，從上週六 (${startDateStr}) 至今目前沒有你的紀錄喔！`);
       }
 
