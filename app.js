@@ -270,10 +270,9 @@ if (text === '📈 本週支出') {
       
       // 5. 回傳訊息 (整合預算餘額)
       return replyText(replyToken, 
-        `📈 ${memberName} 支出統計\n` +
-        `(自上週六 ${startDateStr} 至今)\n` +
-        `💰 總計：$${Math.round(weekTotal)}\n` +
-        `（本週預算尚餘：$${Math.round(remainingBudget)}）\n\n` +
+        `📈 ${memberName} 本週支出\n` +
+        `（自 ${startDateStr} 至今)\n` +
+        `💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n` +
         `${listContent}`
       );
     }
