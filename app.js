@@ -212,6 +212,9 @@ app.post('/webhook', async (req, res) => {
         return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
       }
 
+      // --- 新增：計算本月總計 ---
+      const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
+
       // 排序：按時間由舊到新
       const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
@@ -220,10 +223,11 @@ app.post('/webhook', async (req, res) => {
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
+        return `${month}/${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
 
-      return replyText(replyToken, `🗓️ 本月消費紀錄：\n\n${listContent}`);
+      // --- 修改：在標題加入總計 ---
+      return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
     
 if (text === '📈 本週支出') {
@@ -270,8 +274,7 @@ if (text === '📈 本週支出') {
       
       // 5. 回傳訊息 (整合預算餘額)
       return replyText(replyToken, 
-        `📈 ${memberName} 本週支出\n` +
-        `（自 ${startDateStr} 至今)\n` +
+        `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n` +
         `💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n` +
         `${listContent}`
       );
