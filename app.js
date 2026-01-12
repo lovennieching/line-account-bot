@@ -253,7 +253,7 @@ if (text === '📈 本週支出') {
       const remainingBudget = weeklyBudget - weekTotal;
 
       if (weekRecords.length === 0) {
-        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
         return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 本週預算剩餘：$${Math.round(remainingBudget)}`);
       }
       
@@ -263,7 +263,7 @@ if (text === '📈 本週支出') {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        return `${month}${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
       const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
