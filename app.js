@@ -231,35 +231,47 @@ if (text === '📈 本週支出') {
       // 取得台灣時間的「今天」
       const today = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
       
-      // 計算本週一的日期 (0 是週日, 1 是週一...)
+      // --- 修改開始：計算上週六的日期 ---
+      // today.getDay() 0=日, 1=一, 2=二, 3=三, 4=四, 5=五, 6=六
       const dayOfWeek = today.getDay(); 
-      const diff = today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
-      const startOfWeek = new Date(today.setDate(diff));
-      startOfWeek.setHours(0, 0, 0, 0);
+      
+      // 計算距離「最近的週六」差幾天
+      // 如果今天是週日(0)，距離上週六是 1 天
+      // 如果今天是週六(6)，距離上週六是 7 天（算進去新的週期）或是 0 天（當作起始點）
+      // 這裡採用：包含今天如果是週六，則從今天開始算起；否則回溯到最接近的週六
+      let diffToSaturday = dayOfWeek + 1; 
+      if (dayOfWeek === 6) diffToSaturday = 0; // 如果今天是週六，就從今天凌晨開始
 
-      // 篩選本週且屬於該使用者的紀錄
+      const startOfPeriod = new Date(today);
+      startOfPeriod.setDate(today.getDate() - diffToSaturday);
+      startOfPeriod.setHours(0, 0, 0, 0);
+      // --- 修改結束 ---
+
+      // 篩選範圍且屬於該使用者的紀錄
       const weekRecords = memoryRecords.filter(r => {
         const rDate = new Date(r.iso_date);
-        // 注意：這裡統一使用小寫 r.userid
-        return rDate >= startOfWeek && (r.userid === userId || r.userId === userId);
+        return rDate >= startOfPeriod && (r.userid === userId || r.userId === userId);
       });
 
       if (weekRecords.length === 0) {
-        return replyText(replyToken, `📈 ${memberName}，本週目前沒有你的紀錄喔！`);
+        // 格式化一下日期顯示在訊息中，方便確認起始日
+        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        return replyText(replyToken, `📈 ${memberName}，從上週六 (${startDateStr}) 至今目前沒有你的紀錄喔！`);
       }
 
       const weekTotal = weekRecords.reduce((sum, r) => sum + r.amount, 0);
       
-      // 格式化本週清單
+      // 格式化清單
       const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}${day} ${shopStr} $${Math.round(r.amount)}`;
+        return `${month}/${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
-      return replyText(replyToken, `📈 ${memberName} 本週支出：\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
+      const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+      return replyText(replyToken, `📈 ${memberName} 支出統計\n(自上週六 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
     }
     
     if (text === '清空紀錄') {
