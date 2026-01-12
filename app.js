@@ -228,40 +228,36 @@ app.post('/webhook', async (req, res) => {
     
 if (text === '📈 本週支出') {
       const now = new Date();
-      // 取得台灣時間的「今天」
       const today = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
       
-      // --- 修改開始：計算上週六的日期 ---
-      // today.getDay() 0=日, 1=一, 2=二, 3=三, 4=四, 5=五, 6=六
+      // 1. 計算上週六至今的起始日
       const dayOfWeek = today.getDay(); 
-      
-      // 計算距離「最近的週六」差幾天
-      // 如果今天是週日(0)，距離上週六是 1 天
-      // 如果今天是週六(6)，距離上週六是 7 天（算進去新的週期）或是 0 天（當作起始點）
-      // 這裡採用：包含今天如果是週六，則從今天開始算起；否則回溯到最接近的週六
       let diffToSaturday = dayOfWeek + 1; 
-      if (dayOfWeek === 6) diffToSaturday = 0; // 如果今天是週六，就從今天凌晨開始
+      if (dayOfWeek === 6) diffToSaturday = 0; 
 
       const startOfPeriod = new Date(today);
       startOfPeriod.setDate(today.getDate() - diffToSaturday);
       startOfPeriod.setHours(0, 0, 0, 0);
-      // --- 修改結束 ---
 
-      // 篩選範圍且屬於該使用者的紀錄
+      // 2. 篩選紀錄
       const weekRecords = memoryRecords.filter(r => {
         const rDate = new Date(r.iso_date);
         return rDate >= startOfPeriod && (r.userid === userId || r.userId === userId);
       });
 
-      if (weekRecords.length === 0) {
-        // 格式化一下日期顯示在訊息中，方便確認起始日
-        const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
-        return replyText(replyToken, `📈 ${memberName}，從上週六 (${startDateStr}) 至今目前沒有你的紀錄喔！`);
-      }
-
       const weekTotal = weekRecords.reduce((sum, r) => sum + r.amount, 0);
+
+      // 3. 讀取預算並計算餘額
+      // 從 process.env 讀取，若沒設定則預設為 0
+      const weeklyBudget = parseFloat(process.env.WEEKLY_BUDGET) || 0;
+      const remainingBudget = weeklyBudget - weekTotal;
+
+      if (weekRecords.length === 0) {
+        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 本週預算剩餘：$${Math.round(remainingBudget)}`);
+      }
       
-      // 格式化清單
+      // 4. 格式化清單
       const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
@@ -271,7 +267,15 @@ if (text === '📈 本週支出') {
       }).join('\n');
 
       const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
-      return replyText(replyToken, `📈 ${memberName} 支出統計\n(自上週六 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekTotal)}\n\n${listContent}`);
+      
+      // 5. 回傳訊息 (整合預算餘額)
+      return replyText(replyToken, 
+        `📈 ${memberName} 支出統計\n` +
+        `(自上週六 ${startDateStr} 至今)\n` +
+        `💰 總計：$${Math.round(weekTotal)}\n` +
+        `（本週預算尚餘：$${Math.round(remainingBudget)}）\n\n` +
+        `${listContent}`
+      );
     }
     
     if (text === '清空紀錄') {
