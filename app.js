@@ -26,7 +26,6 @@ let memoryRecords = [];
 (async () => {
   try {
     const client = await pool.connect();
-    // 這裡將欄位名稱統一為小寫 userid 以避免 PostgreSQL 大小寫問題
     await client.query(`CREATE TABLE IF NOT EXISTS records (
       id SERIAL PRIMARY KEY,
       date TEXT,
@@ -50,7 +49,6 @@ async function loadAllRecords() {
     const result = await pool.query(`SELECT * FROM records ORDER BY iso_date DESC LIMIT 1000`);
     memoryRecords = result.rows.map(r => ({
       ...r,
-      // 確保 memoryRecords 中的 key 是 userId，方便後續程式碼讀取
       userId: r.userid, 
       date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
     }));
@@ -72,7 +70,7 @@ function getMemberName(userId) {
 function getSelfCategory(category) {
   const cat = (category || '').toUpperCase();
   if (['LUNCH', 'DINNER', 'DRINKS', '早餐', 'FOOD'].includes(cat)) return 'MEALS';
-  if (['油錢', '車票', '捷運'].includes(cat)) return 'TRANSPORT'; // 範例
+  if (['油錢', '車票', '捷運', '加油'].includes(cat)) return 'TRANSPORT';
   return 'OTHER';
 }
 
@@ -97,7 +95,7 @@ async function showMenu(replyToken) {
         text: '👇 點擊下方按鈕快速操作：',
         quickReply: {
           items: [
-            { type: 'action', action: { type: 'message', label: '📝 即時記帳', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📝 記帳說明', text: '📝 記帳說明' } },
             { type: 'action', action: { type: 'message', label: '📊 本月清單', text: '📊 本月清單' } },
             { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈 本週支出' } },
             { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔 我的ID' } },
@@ -137,25 +135,12 @@ app.get('/', (req, res) => {
 });
 
 app.get('/records.csv', (req, res) => {
-  // 1. 修改標題列，加入「自行分類」
   const header = '日期,成員,類別,店家,金額,userId,自行分類';
-
   const rows = memoryRecords.map(r => {
-    // 2. 呼叫剛才定義的輔助函式來取得分類
     const selfCategory = getSelfCategory(r.category);
-
-    // 3. 組合資料列 (確保最後一個欄位是 selfCategory)
     return `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}","${selfCategory}"`;
   });
-
   const csvData = [header].concat(rows).join('\n');
-
-  res.header('Content-Type', 'text/csv; charset=utf-8');
-  res.attachment('records.csv');
-  res.send('\uFEFF' + csvData); 
-});
-  const csvData = [header].concat(rows).join('\n');
-
   res.header('Content-Type', 'text/csv; charset=utf-8');
   res.attachment('records.csv');
   res.send('\uFEFF' + csvData); 
@@ -177,16 +162,12 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
       try {
         await client.query('BEGIN');
         if (clearOld) await client.query('DELETE FROM records');
-        
         for (const row of results) {
           const amount = parseFloat(row['金額']);
-          // 容錯：若 CSV 日期解析失敗則用現在
           let isoDate;
           try { isoDate = new Date(row['日期']).toISOString(); } catch(e) { isoDate = new Date().toISOString(); }
-          
           await client.query(
-            `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
           );
         }
@@ -215,48 +196,31 @@ app.post('/webhook', async (req, res) => {
     const memberName = getMemberName(userId);
 
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
-    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 滷肉飯 180\n📝 超市 全聯 250`);
+    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 項目 店家(選填) 金額\n例如：滷肉飯 180\n例如：超市 全聯 250`);
     if (text === '🆔 我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
+
     if (text === '📊 本月清單') {
       const now = new Date();
-      // 強制設定為台灣時間的月份與年份
       const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
-      const currentMonth = twNow.getMonth();
-      const currentYear = twNow.getFullYear();
-
       const monthRecords = memoryRecords.filter(r => {
-        // 解析存放在 iso_date 欄位的字串
         const rDate = new Date(r.iso_date);
-        return rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
+        return rDate.getMonth() === twNow.getMonth() && rDate.getFullYear() === twNow.getFullYear();
       });
-
-      if (monthRecords.length === 0) {
-        return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
-      }
-
-      // --- 新增：計算本月總計 ---
+      if (monthRecords.length === 0) return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
       const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
-
-      // 排序：按時間由舊到新
       const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
-        // 使用本地時區顯示 M/D
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
-        
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
         return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
-
-      // --- 修改：在標題加入總計 ---
       return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
     
-if (text === '📈 本週支出') {
+    if (text === '📈 本週支出') {
       const now = new Date();
       const today = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
-      
-      // 1. 計算上週六至今的起始日
       const dayOfWeek = today.getDay(); 
       let diffToSaturday = dayOfWeek + 1; 
       if (dayOfWeek === 6) diffToSaturday = 0; 
@@ -265,25 +229,20 @@ if (text === '📈 本週支出') {
       startOfPeriod.setDate(today.getDate() - diffToSaturday);
       startOfPeriod.setHours(0, 0, 0, 0);
 
-      // 2. 篩選紀錄
       const weekRecords = memoryRecords.filter(r => {
         const rDate = new Date(r.iso_date);
         return rDate >= startOfPeriod && (r.userid === userId || r.userId === userId);
       });
 
       const weekTotal = weekRecords.reduce((sum, r) => sum + r.amount, 0);
-
-      // 3. 讀取預算並計算餘額
-      // 從 process.env 讀取，若沒設定則預設為 0
       const weeklyBudget = parseFloat(process.env.WEEKLY_BUDGET) || 0;
       const remainingBudget = weeklyBudget - weekTotal;
 
       if (weekRecords.length === 0) {
-        const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
+        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
         return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 本週預算剩餘：$${Math.round(remainingBudget)}`);
       }
       
-      // 4. 格式化清單
       const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
@@ -293,18 +252,12 @@ if (text === '📈 本週支出') {
       }).join('\n');
 
       const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
-      
-      // 5. 回傳訊息 (整合預算餘額)
-      return replyText(replyToken, 
-        `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n` +
-        `💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n` +
-        `${listContent}`
-      );
+      return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n${listContent}`);
     }
     
     if (text === '清空紀錄') {
       await pool.query('DELETE FROM records');
-      await loadAllRecords(); // 重新整理記憶體
+      await loadAllRecords();
       return replyText(replyToken, '🗑️ 已清空紀錄');
     }
 
@@ -316,8 +269,6 @@ if (text === '📈 本週支出') {
         const shop = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
         const now = new Date();
         const dateStr = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-        
-        // 修正：這裡使用 userid (小寫)
         await pool.query(
           `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [dateStr, now.toISOString(), memberName, userId, category, shop, amount]
@@ -329,8 +280,8 @@ if (text === '📈 本週支出') {
     return showMenu(replyToken);
   } catch (error) {
     console.error('Webhook Error:', error);
-    res.status(200).send('OK');
   }
+  res.status(200).send('OK');
 });
 
 cron.schedule('0 21 * * 5', async () => {
@@ -338,7 +289,7 @@ cron.schedule('0 21 * * 5', async () => {
   await fetch('https://api.line.me/v2/bot/message/broadcast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
-    body: JSON.stringify({ messages: [{ type: 'text', text: '記得記帳喔！' }] })
+    body: JSON.stringify({ messages: [{ type: 'text', text: '記帳呀臭寶💩' }] })
   }).catch(e => console.error(e));
 }, { timezone: 'Asia/Taipei' });
 
