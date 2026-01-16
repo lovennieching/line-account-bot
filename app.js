@@ -220,15 +220,27 @@ app.post('/webhook', async (req, res) => {
     if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 項目 店家(選填) 金額\n例如：滷肉飯 180\n例如：超市 全聯 250`);
     if (text === '🆔 我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
 
-    if (text === '📊 本月清單') {
+if (text === '📊 本月清單') {
       const now = new Date();
       const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+      
+      // 過濾出本月的紀錄
       const monthRecords = memoryRecords.filter(r => {
         const rDate = new Date(r.iso_date);
         return rDate.getMonth() === twNow.getMonth() && rDate.getFullYear() === twNow.getFullYear();
       });
+
       if (monthRecords.length === 0) return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
+
+      // 計算總金額
       const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
+      
+      // 【新增】計算目前查詢用家的個人總計
+      const userMonthTotal = monthRecords
+        .filter(r => (r.userid === userId || r.userId === userId))
+        .reduce((sum, r) => sum + r.amount, 0);
+
+      // 排序並格式化清單內容
       const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
@@ -236,7 +248,11 @@ app.post('/webhook', async (req, res) => {
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
         return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
-      return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
+
+      // 組合訊息：加入「用家共支出」這一行
+      const replyMsg = `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n${memberName} 共支出：$${Math.round(userMonthTotal).toLocaleString()}\n\n${listContent}`;
+      
+      return replyText(replyToken, replyMsg);
     }
     
     if (text === '📈 本週支出') {
