@@ -140,14 +140,16 @@ app.get('/records.csv', (req, res) => {
   res.send('\uFEFF' + csvData); 
 });
 
-// 【重點修正區】
 app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   if (!req.file) return res.status(400).send('未上傳檔案');
   const clearOld = req.body.clearOld === 'yes';
   const results = [];
 
+  // 使用 mapHeaders 確保標題不受 BOM 或空白影響
   fs.createReadStream(req.file.path)
-    .pipe(csv()) 
+    .pipe(csv({
+      mapHeaders: ({ header }) => header.trim().replace(/^\uFEFF/, '') 
+    })) 
     .on('data', (data) => results.push(data))
     .on('end', async () => {
       const client = await pool.connect();
@@ -156,17 +158,19 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         if (clearOld) await client.query('DELETE FROM records');
 
         for (const row of results) {
+          // 取得原始日期字串 (例如: 2026/1/15 下午 10:57:55)
+          const rawDateStr = row['日期'] || Object.values(row)[0] || "";
           const amount = parseFloat(row['金額'] || 0);
-          const rawDateStr = row['日期'] || "";
-          
-          let isoDate;
-          // 只讀取日期前面「年月日」的部分 (例如 2026/1/15)
-          // 這樣可以避開中文字「下午/上午」導致解析失敗的問題
-          const ymd = rawDateStr.split(' ')[0]; 
-          const parsedDate = new Date(ymd);
 
-          if (!isNaN(parsedDate.getTime())) {
-            isoDate = parsedDate.toISOString();
+          let isoDate;
+          // --- 核心修正：僅讀取 YMD 部分來生成搜尋用的 iso_date ---
+          // 使用正則表達式抓取格式如 YYYY/MM/DD 或 YYYY-MM-DD
+          const dateMatch = rawDateStr.match(/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/);
+          
+          if (dateMatch) {
+            const ymd = dateMatch[0]; 
+            const parsedDate = new Date(ymd);
+            isoDate = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date().toISOString();
           } else {
             isoDate = new Date().toISOString();
           }
@@ -174,8 +178,8 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [
-              rawDateStr, // 原始資料不修改存入
-              isoDate, 
+              rawDateStr, // 這裡存入完整的原始字串，不會被刪除
+              isoDate,    // 這裡存入標準格式供程式過濾月份
               row['成員'] || '', 
               row['userId'] || row['userid'] || '', 
               row['類別'] || '', 
@@ -186,7 +190,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         }
         await client.query('COMMIT');
         await loadAllRecords();
-        res.send(`<h2>✅ 匯入成功 (${results.length} 筆)</h2><a href="/">回到首頁</a>`);
+        res.send(`<h2>✅ 匯入成功</h2><p>已處理 ${results.length} 筆資料。</p><a href="/">回到首頁</a>`);
       } catch (err) {
         await client.query('ROLLBACK');
         console.error('匯入出錯:', err);
