@@ -280,12 +280,9 @@ if (text === '📊 本月清單') {
       const weeklyBudget = parseFloat(process.env.WEEKLY_BUDGET) || 0;
       const remainingBudget = weeklyBudget - foodTotal;
 
-      // 日期格式化函數：將日期轉換為 X月X日
       const formatDate = (isoStr) => {
-        const d = new Date(isoStr);
-        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
-        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
-        return `${month}月${day}日`;
+        const d = new Date(new Date(isoStr).toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+        return `${d.getMonth() + 1}月${d.getDate()}日`;
       };
 
       if (weekRecords.length === 0) {
