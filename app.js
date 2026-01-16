@@ -108,11 +108,20 @@ async function showMenu(replyToken) {
 
 // --- 路由 ---
 
-app.get('/', (req, res) => {
-  const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
-  const recent5 = memoryRecords.slice(0, 5).map(r => 
-    `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`
-  ).join('<br>');
+app.get('/records.csv', (req, res) => {
+  // 增加 isoDate 欄位供匯入辨認
+  const header = '日期,成員,類別,店家,金額,userId,自行分類,isoDate';
+  const rows = memoryRecords.map(r => {
+    const selfCategory = getSelfCategory(r.category);
+    // 確保 iso_date 存在，如果沒有就用現在時間補
+    const iso = r.iso_date || new Date().toISOString();
+    return `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}","${selfCategory}","${iso}"`;
+  });
+  const csvData = [header].concat(rows).join('\n');
+  res.header('Content-Type', 'text/csv; charset=utf-8');
+  res.attachment('records.csv');
+  res.send('\uFEFF' + csvData); 
+});
   
   res.send(`
     <h1>📊 記帳 Bot 狀態 (PostgreSQL)</h1>
@@ -152,7 +161,8 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   const results = [];
 
   fs.createReadStream(req.file.path)
-    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId']))
+    // 這裡要對應你下載的 CSV 標題
+    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId', '自行分類', 'isoDate']))
     .on('data', (data) => {
       if (data['日期'] === '日期' || !data['金額']) return;
       results.push(data);
@@ -164,8 +174,25 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         if (clearOld) await client.query('DELETE FROM records');
         for (const row of results) {
           const amount = parseFloat(row['金額']);
+          
+          // --- 日期辨識強化邏輯 ---
           let isoDate;
-          try { isoDate = new Date(row['日期']).toISOString(); } catch(e) { isoDate = new Date().toISOString(); }
+          // 優先使用隱藏的 isoDate 欄位
+          if (row['isoDate'] && row['isoDate'] !== 'isoDate') {
+            isoDate = new Date(row['isoDate']).toISOString();
+          } else {
+            // 如果只有中文日期，進行清洗
+            let rawDate = row['日期'] || "";
+            let cleanDate = rawDate.replace('上午', 'AM').replace('下午', 'PM');
+            try {
+              let parsed = new Date(cleanDate);
+              isoDate = isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+            } catch(e) {
+              isoDate = new Date().toISOString();
+            }
+          }
+          // -----------------------
+
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
@@ -178,9 +205,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
       } catch (err) {
         await client.query('ROLLBACK');
         res.status(500).send('錯誤：' + err.message);
-      } finally {
-        client.release();
-      }
+      } finally { client.release(); }
     });
 });
 
