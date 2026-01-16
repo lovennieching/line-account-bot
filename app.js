@@ -50,7 +50,6 @@ async function loadAllRecords() {
     memoryRecords = result.rows.map(r => ({
       ...r,
       userId: r.userid, 
-      // 優先使用 iso_date 轉換，確保時間格式統一
       date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
     }));
     console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
@@ -147,12 +146,12 @@ app.get('/records.csv', (req, res) => {
   res.send('\uFEFF' + csvData); 
 });
 
+// 【核心修正】修正上傳時日期全部變成今天的問題
 app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   if (!req.file) return res.status(400).send('未上傳檔案');
   const clearOld = req.body.clearOld === 'yes';
   const results = [];
 
-  // 使用預設 csv()，它會自動抓 CSV 第一行作為物件的 Key
   fs.createReadStream(req.file.path)
     .pipe(csv()) 
     .on('data', (data) => results.push(data))
@@ -163,14 +162,20 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         if (clearOld) await client.query('DELETE FROM records');
 
         for (const row of results) {
-          // 對應你的 CSV 標題名稱：日期,成員,類別,店家,金額,userId
           const amount = parseFloat(row['金額'] || 0);
           const rawDateStr = row['日期'] || "";
           
-          // 修復日期解析：處理「下午/上午」中文字
+          // 修正日期辨識：將 "下午" 替換成 "PM"，"上午" 替換成 "AM"
           let cleanDateStr = rawDateStr.replace('上午', 'AM').replace('下午', 'PM');
           let parsedDate = new Date(cleanDateStr);
-          let isoDate = (!isNaN(parsedDate.getTime())) ? parsedDate.toISOString() : new Date().toISOString();
+          
+          let isoDate;
+          // 檢查是否解析成功，若成功則使用 CSV 裡的日期，失敗才用當前日期
+          if (!isNaN(parsedDate.getTime())) {
+            isoDate = parsedDate.toISOString();
+          } else {
+            isoDate = new Date().toISOString();
+          }
 
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -186,7 +191,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
           );
         }
         await client.query('COMMIT');
-        await loadAllRecords(); // 更新記憶體
+        await loadAllRecords();
         res.send(`<h2>✅ 匯入成功 (${results.length} 筆)</h2><a href="/">回到首頁</a>`);
       } catch (err) {
         await client.query('ROLLBACK');
@@ -216,15 +221,12 @@ app.post('/webhook', async (req, res) => {
 
     if (text === '📊 本月清單') {
       const now = new Date();
-      // 使用台北時間進行月份比較
       const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
       const monthRecords = memoryRecords.filter(r => {
         const rDate = new Date(r.iso_date);
         return rDate.getMonth() === twNow.getMonth() && rDate.getFullYear() === twNow.getFullYear();
       });
-
       if (monthRecords.length === 0) return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
-
       const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
       const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
@@ -233,7 +235,6 @@ app.post('/webhook', async (req, res) => {
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
         return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
-
       return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
     
