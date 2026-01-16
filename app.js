@@ -69,6 +69,13 @@ function getMemberName(userId) {
   return FAMILY[userId] || userId.slice(-8);
 }
 
+function getSelfCategory(category) {
+  const cat = (category || '').toUpperCase();
+  if (['LUNCH', 'DINNER', 'DRINKS', '早餐', 'FOOD'].includes(cat)) return 'MEALS';
+  if (['油錢', '車票', '捷運'].includes(cat)) return 'TRANSPORT'; // 範例
+  return 'OTHER';
+}
+
 async function replyText(replyToken, text) {
   const fetch = (await import('node-fetch')).default;
   await fetch('https://api.line.me/v2/bot/message/reply', {
@@ -130,10 +137,25 @@ app.get('/', (req, res) => {
 });
 
 app.get('/records.csv', (req, res) => {
-  // 修正：確保讀取 memoryRecords 時使用正確的 key
-  const csvData = ['日期,成員,類別,店家,金額,userId'].concat(
-    memoryRecords.map(r => `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}"`)
-  ).join('\n');
+  // 1. 修改標題列，加入「自行分類」
+  const header = '日期,成員,類別,店家,金額,userId,自行分類';
+
+  const rows = memoryRecords.map(r => {
+    // 2. 呼叫剛才定義的輔助函式來取得分類
+    const selfCategory = getSelfCategory(r.category);
+
+    // 3. 組合資料列 (確保最後一個欄位是 selfCategory)
+    return `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}","${selfCategory}"`;
+  });
+
+  const csvData = [header].concat(rows).join('\n');
+
+  res.header('Content-Type', 'text/csv; charset=utf-8');
+  res.attachment('records.csv');
+  res.send('\uFEFF' + csvData); 
+});
+  const csvData = [header].concat(rows).join('\n');
+
   res.header('Content-Type', 'text/csv; charset=utf-8');
   res.attachment('records.csv');
   res.send('\uFEFF' + csvData); 
