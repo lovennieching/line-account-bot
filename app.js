@@ -9,12 +9,10 @@ const app = express();
 app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
 
-// 環境變數
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const connectionString = process.env.DATABASE_URL;
 const isProduction = process.env.NODE_ENV === 'production';
 
-// 資料庫連線池
 const pool = new Pool({
   connectionString: connectionString,
   ssl: isProduction ? { rejectUnauthorized: false } : false
@@ -22,7 +20,6 @@ const pool = new Pool({
 
 let memoryRecords = [];
 
-// --- 初始化資料庫 ---
 (async () => {
   try {
     const client = await pool.connect();
@@ -50,7 +47,7 @@ async function loadAllRecords() {
     memoryRecords = result.rows.map(r => ({
       ...r,
       userId: r.userid, 
-      date: r.date || new Date(r.iso_date).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
+      date: r.date
     }));
     console.log(`📊 載入 ${memoryRecords.length} 筆記錄`);
   } catch (err) {
@@ -58,7 +55,6 @@ async function loadAllRecords() {
   }
 }
 
-// --- 輔助函式 ---
 function getMemberName(userId) {
   const FAMILY = {
     'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
@@ -106,8 +102,6 @@ async function showMenu(replyToken) {
   }).catch(e => console.error('選單錯誤：', e));
 }
 
-// --- 路由 ---
-
 app.get('/', (req, res) => {
   const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
   const recent5 = memoryRecords.slice(0, 5).map(r => 
@@ -146,7 +140,7 @@ app.get('/records.csv', (req, res) => {
   res.send('\uFEFF' + csvData); 
 });
 
-// 【核心修正】修正上傳時日期全部變成今天的問題
+// 【重點修正區】
 app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   if (!req.file) return res.status(400).send('未上傳檔案');
   const clearOld = req.body.clearOld === 'yes';
@@ -165,12 +159,12 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
           const amount = parseFloat(row['金額'] || 0);
           const rawDateStr = row['日期'] || "";
           
-          // 修正日期辨識：將 "下午" 替換成 "PM"，"上午" 替換成 "AM"
-          let cleanDateStr = rawDateStr.replace('上午', 'AM').replace('下午', 'PM');
-          let parsedDate = new Date(cleanDateStr);
-          
           let isoDate;
-          // 檢查是否解析成功，若成功則使用 CSV 裡的日期，失敗才用當前日期
+          // 只讀取日期前面「年月日」的部分 (例如 2026/1/15)
+          // 這樣可以避開中文字「下午/上午」導致解析失敗的問題
+          const ymd = rawDateStr.split(' ')[0]; 
+          const parsedDate = new Date(ymd);
+
           if (!isNaN(parsedDate.getTime())) {
             isoDate = parsedDate.toISOString();
           } else {
@@ -180,7 +174,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [
-              rawDateStr, 
+              rawDateStr, // 原始資料不修改存入
               isoDate, 
               row['成員'] || '', 
               row['userId'] || row['userid'] || '', 
@@ -233,7 +227,7 @@ app.post('/webhook', async (req, res) => {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
+        return `${month}/${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
       return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
@@ -268,7 +262,7 @@ app.post('/webhook', async (req, res) => {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        return `${month}/${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
       const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
