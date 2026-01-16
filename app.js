@@ -234,7 +234,7 @@ app.post('/webhook', async (req, res) => {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
+        return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
       return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
@@ -260,7 +260,7 @@ app.post('/webhook', async (req, res) => {
       const remainingBudget = weeklyBudget - weekTotal;
 
       if (weekRecords.length === 0) {
-        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
         return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 本週預算剩餘：$${Math.round(remainingBudget)}`);
       }
       
@@ -269,10 +269,10 @@ app.post('/webhook', async (req, res) => {
         const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
         const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        return `${month}${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
-      const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+      const startDateStr = `${startOfPeriod.getMonth() + 1}${startOfPeriod.getDate()}`;
       return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n${listContent}`);
     }
     
