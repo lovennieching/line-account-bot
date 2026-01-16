@@ -272,30 +272,37 @@ if (text === '📊 本月清單') {
         return rDate >= startOfPeriod && (r.userid === userId || r.userId === userId);
       });
 
-      // 2. 【核心修改】只計算分類為餐飲 (MEALS/FOOD) 的支出總額
+      // 2. 【核心修改】只計算分類「嚴格等於」MEALS 的支出總額
       const foodTotal = weekRecords
-        .filter(r => getSelfCategory(r.category) === 'MEALS') // 這裡對應你代碼中分類後的標籤
+        .filter(r => getSelfCategory(r.category) === 'MEALS')
         .reduce((sum, r) => sum + r.amount, 0);
 
       const weeklyBudget = parseFloat(process.env.WEEKLY_BUDGET) || 0;
       const remainingBudget = weeklyBudget - foodTotal;
 
+      // 日期格式化函數：將日期轉換為 X月X日
+      const formatDate = (isoStr) => {
+        const d = new Date(isoStr);
+        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
+        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        return `${month}月${day}日`;
+      };
+
       if (weekRecords.length === 0) {
-        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
-        return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 餐飲預算尚餘：$${Math.round(remainingBudget)}`);
+        const startDateStr = formatDate(startOfPeriod);
+        return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n\n💰 餐飲預算尚餘：$${Math.round(remainingBudget)}`);
       }
       
       const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
-        const d = new Date(r.iso_date);
-        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
-        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        const dateStr = formatDate(r.iso_date);
         const shopStr = r.shop ? ` ${r.shop}` : ''; 
-        return `${month}/${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+        return `${dateStr}${shopStr} ${r.category} $${Math.round(r.amount)}`;
       }).join('\n');
 
-      const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
-      // 3. 【文字修改】改為「餐飲預算尚餘」
-      return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekRecords.reduce((s, r) => s + r.amount, 0))} 餐飲預算尚餘：$${Math.round(remainingBudget)}）\n\n${listContent}`);
+      const startDateStr = formatDate(startOfPeriod);
+      // 3. 【格式修改】加入換行符號 \n，並調整預算顯示文字
+      const totalSpent = weekRecords.reduce((s, r) => s + r.amount, 0);
+      return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n💰 總計：$${Math.round(totalSpent)}\n餐飲預算尚餘：$${Math.round(remainingBudget)}\n\n${listContent}`);
     }
     
     if (text === '清空紀錄') {
