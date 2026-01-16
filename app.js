@@ -151,47 +151,50 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   const clearOld = req.body.clearOld === 'yes';
   const results = [];
 
+  // 讀取 CSV
   fs.createReadStream(req.file.path)
-    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId']))
-    .on('data', (data) => {
-      if (data['日期'] === '日期' || !data['金額']) return;
-      results.push(data);
-    })
+    .pipe(csv()) // 讓它自動抓 CSV 第一行的標題，不要手動傳陣列
+    .on('data', (data) => results.push(data))
     .on('end', async () => {
-    // 在 app.post('/import-csv') 的 .on('end', ...) 裡面修改這一段：
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        if (clearOld) await client.query('DELETE FROM records');
 
         for (const row of results) {
-          const amount = parseFloat(row['金額']);
-          let isoDate;
-          
-          // 1. 取得 CSV 原始日期字串
-          let rawDateStr = row['日期'] || ""; 
-          
-          // 2. 清洗日期（把中文換成英文），確保 new Date 能解析
+          // 注意：這裡的 key 必須完全對應你 CSV 檔案第一行的文字
+          const amount = parseFloat(row['金額'] || 0);
+          if (isNaN(amount)) continue;
+
+          let rawDateStr = row['日期'] || "";
           let cleanDateStr = rawDateStr.replace('上午', 'AM').replace('下午', 'PM');
           let parsedDate = new Date(cleanDateStr);
+          let isoDate = (!isNaN(parsedDate.getTime())) ? parsedDate.toISOString() : new Date().toISOString();
 
-          // 3. 判斷是否解析成功
-          if (!isNaN(parsedDate.getTime())) {
-            isoDate = parsedDate.toISOString(); // 成功：使用 CSV 裡的原始時間
-          } else {
-            isoDate = new Date().toISOString(); // 失敗：才用今天
-          }
-
+          // 這裡要對應你 CSV 的欄位名稱
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [rawDateStr, isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
+            [
+              rawDateStr, 
+              isoDate, 
+              row['成員'] || '', 
+              row['userId'] || row['userid'] || '', 
+              row['類別'] || '', 
+              row['店家'] || '', 
+              amount
+            ]
           );
         }
         await client.query('COMMIT');
-        fs.unlinkSync(req.file.path);
-        await loadAllRecords();
+        await loadAllRecords(); // 重新載入記憶體
         res.send(`<h2>✅ 匯入成功 (${results.length} 筆)</h2><a href="/">回到首頁</a>`);
       } catch (err) {
         await client.query('ROLLBACK');
-        res.status(500).send('錯誤：' + err.message);
+        console.error('匯入出錯:', err);
+        res.status(500).send('匯入失敗：' + err.message);
       } finally {
         client.release();
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       }
     });
 });
