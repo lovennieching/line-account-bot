@@ -13,7 +13,6 @@ const upload = multer({ dest: 'uploads/' });
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const connectionString = process.env.DATABASE_URL;
 const isProduction = process.env.NODE_ENV === 'production';
-const WEEKLY_BUDGET = parseFloat(process.env.WEEKLY_BUDGET) || 0;
 
 // 資料庫連線池
 const pool = new Pool({
@@ -23,22 +22,27 @@ const pool = new Pool({
 
 let memoryRecords = [];
 
-// --- 輔助函式區 ---
-
-function getMemberName(userId) {
-  const FAMILY = {
-    'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
-    'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',    
-  };
-  return FAMILY[userId] || userId.slice(-8);
-}
-
-function getSelfCategory(category) {
-  const cat = (category || '').toUpperCase();
-  if (['LUNCH', 'DINNER', 'DRINKS', '早餐', 'FOOD'].includes(cat)) return 'MEALS';
-  if (['油錢', '車票', '捷運', '加油'].includes(cat)) return 'TRANSPORT';
-  return 'OTHER';
-}
+// --- 初始化資料庫 ---
+(async () => {
+  try {
+    const client = await pool.connect();
+    await client.query(`CREATE TABLE IF NOT EXISTS records (
+      id SERIAL PRIMARY KEY,
+      date TEXT,
+      iso_date TEXT,
+      who TEXT,
+      userid TEXT,
+      category TEXT,
+      shop TEXT,
+      amount REAL
+    )`);
+    console.log('✅ PostgreSQL 初始化完成');
+    client.release();
+    await loadAllRecords();
+  } catch (err) {
+    console.error('❌ 資料庫初始化失敗:', err);
+  }
+})();
 
 async function loadAllRecords() {
   try {
@@ -52,6 +56,22 @@ async function loadAllRecords() {
   } catch (err) {
     console.error('載入記錄失敗:', err);
   }
+}
+
+// --- 輔助函式 ---
+function getMemberName(userId) {
+  const FAMILY = {
+    'U7b036b0665085f9f4089970b04e742b6': '葉大屁',
+    'Ucfb49f6b2aa41068f59aaa4a0b3d01dd': '列小芬',    
+  };
+  return FAMILY[userId] || userId.slice(-8);
+}
+
+function getSelfCategory(category) {
+  const cat = (category || '').toUpperCase();
+  if (['LUNCH', 'DINNER', 'DRINKS', '早餐', 'FOOD'].includes(cat)) return 'MEALS';
+  if (['油錢', '車票', '捷運', '加油'].includes(cat)) return 'TRANSPORT';
+  return 'OTHER';
 }
 
 async function replyText(replyToken, text) {
@@ -69,20 +89,16 @@ async function showMenu(replyToken) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
     body: JSON.stringify({
-      replyToken: replyToken,
+      replyToken,
       messages: [{
-        type: 'template',
-        altText: '記帳管理員選單',
-        template: {
-          type: 'buttons',
-          thumbnailImageUrl: 'https://i.imgur.com/pRdaAmS.jpg',
-          title: '記帳管理員',
-          text: '請選擇操作功能：',
-          actions: [
-            { type: 'message', label: '📊 本月清單', text: '📊 本月清單' },
-            { type: 'message', label: '📈 本週支出', text: '📈 本週支出' },
-            { type: 'message', label: '📝 記帳說明', text: '📝 記帳說明' },
-            { type: 'message', label: '🆔 我的ID', text: '🆔 我的ID' }
+        type: 'text',
+        text: '👇 點擊下方按鈕快速操作：',
+        quickReply: {
+          items: [
+            { type: 'action', action: { type: 'message', label: '📝 記帳說明', text: '📝 記帳說明' } },
+            { type: 'action', action: { type: 'message', label: '📊 本月清單', text: '📊 本月清單' } },
+            { type: 'action', action: { type: 'message', label: '📈 本週支出', text: '📈 本週支出' } },
+            { type: 'action', action: { type: 'message', label: '🆔 我的ID', text: '🆔 我的ID' } },
           ]
         }
       }]
@@ -90,58 +106,39 @@ async function showMenu(replyToken) {
   }).catch(e => console.error('選單錯誤：', e));
 }
 
-// --- 初始化資料庫 ---
-(async () => {
-  try {
-    const client = await pool.connect();
-    await client.query(`CREATE TABLE IF NOT EXISTS records (
-      id SERIAL PRIMARY KEY,
-      date TEXT,
-      iso_date TEXT,
-      who TEXT,
-      userid TEXT,
-      category TEXT,
-      shop TEXT,
-      amount REAL
-    )`);
-    client.release();
-    await loadAllRecords();
-    console.log('✅ 資料庫初始化完成');
-  } catch (err) {
-    console.error('❌ 資料庫初始化失敗:', err);
-  }
-})();
-
 // --- 路由 ---
 
 app.get('/', (req, res) => {
   const total = memoryRecords.reduce((sum, r) => sum + r.amount, 0);
   const recent5 = memoryRecords.slice(0, 5).map(r => 
-    `${r.date.slice(0,16)} ${r.who} ${r.category} $${r.amount}`
+    `${r.date.slice(0,16)} ${r.who} ${r.category} ${r.shop ? `(${r.shop})` : ''} ${r.amount}元`
   ).join('<br>');
   
   res.send(`
-    <h1>📊 記帳 Bot 狀態</h1>
+    <h1>📊 記帳 Bot 狀態 (PostgreSQL)</h1>
     <p>總筆數：${memoryRecords.length} | 總金額：${total.toLocaleString()} 元</p>
     <h3>最新 5 筆：</h3><pre>${recent5}</pre>
     <hr>
     <h3>📥 資料匯入/備份</h3>
     <p><a href="/records.csv">下載目前的 CSV 備份</a></p>
-    <form action="/import-csv" method="post" enctype="multipart/form-data">
-      <input type="file" name="csvFile" accept=".csv" required><br><br>
-      <label style="color: red;"><input type="checkbox" name="clearOld" value="yes"> 匯入前清空資料庫</label><br><br>
-      <button type="submit">開始匯入</button>
-    </form>
+    <div style="background: #f4f4f4; padding: 15px; border-radius: 8px; display: inline-block;">
+      <form action="/import-csv" method="post" enctype="multipart/form-data">
+        <strong>📤 選擇備份檔 (CSV)：</strong><br><br>
+        <input type="file" name="csvFile" accept=".csv" required><br><br>
+        <label style="color: red; font-weight: bold;">
+          <input type="checkbox" name="clearOld" value="yes"> 匯入前先清空資料庫所有紀錄
+        </label><br><br>
+        <button type="submit" style="padding: 5px 15px; cursor: pointer;">開始匯入</button>
+      </form>
+    </div>
   `);
 });
 
 app.get('/records.csv', (req, res) => {
-  // 匯出時包含 isoDate 以利後續精準匯入
-  const header = '日期,成員,類別,店家,金額,userId,自行分類,isoDate';
+  const header = '日期,成員,類別,店家,金額,userId,自行分類';
   const rows = memoryRecords.map(r => {
     const selfCategory = getSelfCategory(r.category);
-    const iso = r.iso_date || new Date().toISOString();
-    return `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}","${selfCategory}","${iso}"`;
+    return `"${r.date}","${r.who}","${r.category}","${r.shop}",${r.amount},"${r.userId || r.userid}","${selfCategory}"`;
   });
   const csvData = [header].concat(rows).join('\n');
   res.header('Content-Type', 'text/csv; charset=utf-8');
@@ -155,9 +152,9 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
   const results = [];
 
   fs.createReadStream(req.file.path)
-    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId', '自行分類', 'isoDate']))
+    .pipe(csv(['日期', '成員', '類別', '店家', '金額', 'userId']))
     .on('data', (data) => {
-      if (data['日期'] === '日期' || !data['金額'] || isNaN(parseFloat(data['金額']))) return;
+      if (data['日期'] === '日期' || !data['金額']) return;
       results.push(data);
     })
     .on('end', async () => {
@@ -168,16 +165,7 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         for (const row of results) {
           const amount = parseFloat(row['金額']);
           let isoDate;
-          
-          // 加強日期辨識：優先用 isoDate，否則清洗中文日期
-          if (row['isoDate'] && row['isoDate'] !== 'isoDate') {
-            isoDate = new Date(row['isoDate']).toISOString();
-          } else {
-            let cleanDate = (row['日期'] || "").replace('上午', 'AM').replace('下午', 'PM');
-            let parsed = new Date(cleanDate);
-            isoDate = isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
-          }
-
+          try { isoDate = new Date(row['日期']).toISOString(); } catch(e) { isoDate = new Date().toISOString(); }
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
@@ -189,15 +177,18 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
         res.send(`<h2>✅ 匯入成功 (${results.length} 筆)</h2><a href="/">回到首頁</a>`);
       } catch (err) {
         await client.query('ROLLBACK');
-        res.status(500).send(err.message);
-      } finally { client.release(); }
+        res.status(500).send('錯誤：' + err.message);
+      } finally {
+        client.release();
+      }
     });
 });
 
 app.post('/webhook', async (req, res) => {
   try {
     const event = req.body.events[0];
-    if (!event || event.type !== 'message' || event.message.type !== 'text') return res.status(200).send('OK');
+    if (!event || event.type !== 'message' || event.message.type !== 'text') 
+      return res.status(200).send('OK');
 
     const text = event.message.text.trim();
     const replyToken = event.replyToken;
@@ -205,47 +196,69 @@ app.post('/webhook', async (req, res) => {
     const memberName = getMemberName(userId);
 
     if (['菜單', '選單', 'menu'].includes(text)) return showMenu(replyToken);
-    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 類別 店家(選填) 金額\n例如：餐飲 麥當勞 150`);
+    if (text === '📝 記帳說明') return replyText(replyToken, `${memberName} 記帳教學：\n📝 項目 店家(選填) 金額\n例如：滷肉飯 180\n例如：超市 全聯 250`);
     if (text === '🆔 我的ID') return replyText(replyToken, `👤 ${memberName}\nID：${userId}`);
 
     if (text === '📊 本月清單') {
       const now = new Date();
       const twNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
       const monthRecords = memoryRecords.filter(r => {
-        const d = new Date(r.iso_date);
-        return d.getMonth() === twNow.getMonth() && d.getFullYear() === twNow.getFullYear();
+        const rDate = new Date(r.iso_date);
+        return rDate.getMonth() === twNow.getMonth() && rDate.getFullYear() === twNow.getFullYear();
       });
-      if (monthRecords.length === 0) return replyText(replyToken, '📅 本月目前沒有記帳紀錄喔！');
-      
-      const total = monthRecords.reduce((s, r) => s + r.amount, 0);
-      const list = monthRecords.slice().sort((a,b)=>new Date(a.iso_date)-new Date(b.iso_date)).map(r => {
+      if (monthRecords.length === 0) return replyText(replyToken, `📅 本月目前沒有記帳紀錄喔！`);
+      const monthTotal = monthRecords.reduce((sum, r) => sum + r.amount, 0);
+      const listContent = monthRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
         const d = new Date(r.iso_date);
-        return `${d.getMonth()+1}${d.getDate()} ${r.who}${r.shop?' '+r.shop:''} $${Math.round(r.amount)}`;
+        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
+        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        const shopStr = r.shop ? ` ${r.shop}` : ''; 
+        return `${month}${day} ${r.who}${shopStr} $${Math.round(r.amount)}`;
       }).join('\n');
-      return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(total).toLocaleString()}）\n\n${list}`);
+      return replyText(replyToken, `🗓️ 本月消費紀錄：（總計：$${Math.round(monthTotal).toLocaleString()}）\n\n${listContent}`);
     }
-
+    
     if (text === '📈 本週支出') {
       const now = new Date();
       const today = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
       const dayOfWeek = today.getDay(); 
-      let diff = dayOfWeek + 1; 
-      if (dayOfWeek === 6) diff = 0; // 如果今天是週六，從今天開始算起
-      
-      const start = new Date(today);
-      start.setDate(today.getDate() - diff);
-      start.setHours(0,0,0,0);
+      let diffToSaturday = dayOfWeek + 1; 
+      if (dayOfWeek === 6) diffToSaturday = 0; 
 
-      const weekRecords = memoryRecords.filter(r => new Date(r.iso_date) >= start && (r.userid === userId || r.userId === userId));
-      const total = weekRecords.reduce((s, r) => s + r.amount, 0);
-      const remaining = WEEKLY_BUDGET - total;
-      const list = weekRecords.slice().sort((a,b)=>new Date(a.iso_date)-new Date(b.iso_date)).map(r => {
-        const d = new Date(r.iso_date);
-        return `${d.getMonth()+1}${d.getDate()}${r.shop?' '+r.shop:''} ${r.category} $${Math.round(r.amount)}`;
-      }).join('\n');
+      const startOfPeriod = new Date(today);
+      startOfPeriod.setDate(today.getDate() - diffToSaturday);
+      startOfPeriod.setHours(0, 0, 0, 0);
+
+      const weekRecords = memoryRecords.filter(r => {
+        const rDate = new Date(r.iso_date);
+        return rDate >= startOfPeriod && (r.userid === userId || r.userId === userId);
+      });
+
+      const weekTotal = weekRecords.reduce((sum, r) => sum + r.amount, 0);
+      const weeklyBudget = parseFloat(process.env.WEEKLY_BUDGET) || 0;
+      const remainingBudget = weeklyBudget - weekTotal;
+
+      if (weekRecords.length === 0) {
+        const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+        return replyText(replyToken, `📈 ${memberName}，自上週六 (${startDateStr}) 至今尚無支出。\n💰 本週預算剩餘：$${Math.round(remainingBudget)}`);
+      }
       
-      const startStr = `${start.getMonth()+1}${start.getDate()}`;
-      return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startStr} 至今)\n💰 總計：$${Math.round(total)} 預算尚餘：$${Math.round(remaining)}）\n\n${list}`);
+      const listContent = weekRecords.slice().sort((a, b) => new Date(a.iso_date) - new Date(b.iso_date)).map(r => {
+        const d = new Date(r.iso_date);
+        const month = d.toLocaleDateString('zh-TW', { month: 'numeric', timeZone: 'Asia/Taipei' });
+        const day = d.toLocaleDateString('zh-TW', { day: 'numeric', timeZone: 'Asia/Taipei' });
+        const shopStr = r.shop ? ` ${r.shop}` : ''; 
+        return `${month}${day}${shopStr} ${r.category} $${Math.round(r.amount)}`;
+      }).join('\n');
+
+      const startDateStr = `${startOfPeriod.getMonth() + 1}/${startOfPeriod.getDate()}`;
+      return replyText(replyToken, `📈 ${memberName} 本週支出（自 ${startDateStr} 至今)\n💰 總計：$${Math.round(weekTotal)} 預算尚餘：$${Math.round(remainingBudget)}）\n\n${listContent}`);
+    }
+    
+    if (text === '清空紀錄') {
+      await pool.query('DELETE FROM records');
+      await loadAllRecords();
+      return replyText(replyToken, '🗑️ 已清空紀錄');
     }
 
     const parts = text.split(/\s+/);
@@ -261,11 +274,13 @@ app.post('/webhook', async (req, res) => {
           [dateStr, now.toISOString(), memberName, userId, category, shop, amount]
         );
         await loadAllRecords();
-        return replyText(replyToken, `✅ 已記帳：${category} $${amount}`);
+        return replyText(replyToken, `✅ 已記帳：${category} ${amount}元`);
       }
     }
     return showMenu(replyToken);
-  } catch (error) { console.error('Webhook Error:', error); }
+  } catch (error) {
+    console.error('Webhook Error:', error);
+  }
   res.status(200).send('OK');
 });
 
@@ -274,7 +289,7 @@ cron.schedule('0 21 * * 5', async () => {
   await fetch('https://api.line.me/v2/bot/message/broadcast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
-    body: JSON.stringify({ messages: [{ type: 'text', text: '記帳呀臭寶💩！' }] })
+    body: JSON.stringify({ messages: [{ type: 'text', text: '記帳呀臭寶💩' }] })
   }).catch(e => console.error(e));
 }, { timezone: 'Asia/Taipei' });
 
