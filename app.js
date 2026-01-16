@@ -158,33 +158,29 @@ app.post('/import-csv', upload.single('csvFile'), async (req, res) => {
       results.push(data);
     })
     .on('end', async () => {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        if (clearOld) await client.query('DELETE FROM records');
+    // 在 app.post('/import-csv') 的 .on('end', ...) 裡面修改這一段：
+
         for (const row of results) {
           const amount = parseFloat(row['金額']);
           let isoDate;
           
-          // --- 日期修復邏輯 ---
-          try {
-            // 將中文「上午/下午」替換為機器可辨識的「AM/PM」
-            let rawDateStr = row['日期'] || "";
-            let cleanDateStr = rawDateStr.replace('上午', 'AM').replace('下午', 'PM');
-            let parsedDate = new Date(cleanDateStr);
-            
-            if (isNaN(parsedDate.getTime())) {
-              throw new Error('Invalid Date');
-            }
-            isoDate = parsedDate.toISOString();
-          } catch(e) {
-            isoDate = new Date().toISOString(); 
+          // 1. 取得 CSV 原始日期字串
+          let rawDateStr = row['日期'] || ""; 
+          
+          // 2. 清洗日期（把中文換成英文），確保 new Date 能解析
+          let cleanDateStr = rawDateStr.replace('上午', 'AM').replace('下午', 'PM');
+          let parsedDate = new Date(cleanDateStr);
+
+          // 3. 判斷是否解析成功
+          if (!isNaN(parsedDate.getTime())) {
+            isoDate = parsedDate.toISOString(); // 成功：使用 CSV 裡的原始時間
+          } else {
+            isoDate = new Date().toISOString(); // 失敗：才用今天
           }
-          // -------------------
 
           await client.query(
             `INSERT INTO records (date, iso_date, who, userid, category, shop, amount) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [row['日期'], isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
+            [rawDateStr, isoDate, row['成員'], row['userId'], row['類別'], row['店家'] || '', amount]
           );
         }
         await client.query('COMMIT');
